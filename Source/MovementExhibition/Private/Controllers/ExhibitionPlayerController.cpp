@@ -7,10 +7,10 @@
 #include "EnhancedInputSubsystems.h"
 #include "Characters/ExhibitionCharacter.h"
 
-void AExhibitionPlayerController::OnPossess(APawn* InPawn)
+void AExhibitionPlayerController::AcknowledgePossession(APawn* P)
 {
-	Super::OnPossess(InPawn);
-	CharacterRef = Cast<AExhibitionCharacter>(InPawn);
+	Super::AcknowledgePossession(P);
+	CharacterRef = Cast<AExhibitionCharacter>(P);
 }
 
 void AExhibitionPlayerController::OnUnPossess()
@@ -86,4 +86,7 @@ void AExhibitionPlayerController::RequestStopJump()
 
 void AExhibitionPlayerController::RequestCrouch()
 {
+	ensure(CharacterRef);
+
+	CharacterRef->ToggleCrouch();
 }

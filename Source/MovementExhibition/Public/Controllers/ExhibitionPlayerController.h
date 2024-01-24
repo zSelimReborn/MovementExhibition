@@ -20,8 +20,8 @@ class MOVEMENTEXHIBITION_API AExhibitionPlayerController : public APlayerControl
 	GENERATED_BODY()
 
 protected:
-	virtual void OnPossess(APawn* InPawn) override;
-
+	virtual void AcknowledgePossession(APawn* P) override;
+	
 	virtual void OnUnPossess() override;
 
 	virtual void SetupInputComponent() override;
