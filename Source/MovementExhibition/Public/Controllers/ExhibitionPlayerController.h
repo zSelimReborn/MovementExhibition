@@ -37,6 +37,9 @@ public:
 	void RequestStopJump();
 	
 	void RequestCrouch();
+
+	void RequestSprint();
+	void RequestFinishSprint();
 	
 // Inputs
 protected:
@@ -51,6 +54,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input Actions")
 	TObjectPtr<UInputAction> CrouchAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input Actions")
+	TObjectPtr<UInputAction> SprintAction;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input Actions")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;

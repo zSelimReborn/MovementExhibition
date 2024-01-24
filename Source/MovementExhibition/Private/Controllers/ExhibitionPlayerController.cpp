@@ -6,6 +6,7 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Characters/ExhibitionCharacter.h"
+#include "Components/ExhibitionMovementComponent.h"
 
 void AExhibitionPlayerController::AcknowledgePossession(APawn* P)
 {
@@ -32,6 +33,9 @@ void AExhibitionPlayerController::SetupInputComponent()
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &AExhibitionPlayerController::RequestStopJump);
 
 		EnhancedInputComponent->BindAction(CrouchAction, ETriggerEvent::Triggered, this, &AExhibitionPlayerController::RequestCrouch);
+		
+		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &AExhibitionPlayerController::RequestSprint);
+		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &AExhibitionPlayerController::RequestFinishSprint);
 
 		InitializeMappingContext();
 	}
@@ -72,21 +76,37 @@ void AExhibitionPlayerController::RequestLook(const FInputActionValue& InputActi
 
 void AExhibitionPlayerController::RequestJump()
 {
-	ensure(CharacterRef);
+	ensure(CharacterRef != nullptr);
 
 	CharacterRef->Jump();
 }
 
 void AExhibitionPlayerController::RequestStopJump()
 {
-	ensure(CharacterRef);
+	ensure(CharacterRef != nullptr);
 
 	CharacterRef->StopJumping();
 }
 
 void AExhibitionPlayerController::RequestCrouch()
 {
-	ensure(CharacterRef);
+	ensure(CharacterRef != nullptr);
 
 	CharacterRef->ToggleCrouch();
+}
+
+void AExhibitionPlayerController::RequestSprint()
+{
+	ensure(CharacterRef != nullptr);
+	ensure(CharacterRef->GetExhibitionMovComponent());
+
+	CharacterRef->GetExhibitionMovComponent()->RequestSprint();
+}
+
+void AExhibitionPlayerController::RequestFinishSprint()
+{
+	ensure(CharacterRef != nullptr);
+	ensure(CharacterRef->GetExhibitionMovComponent());
+
+	CharacterRef->GetExhibitionMovComponent()->FinishSprint();
 }
