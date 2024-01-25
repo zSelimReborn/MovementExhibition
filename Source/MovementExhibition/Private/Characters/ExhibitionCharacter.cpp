@@ -55,3 +55,16 @@ void AExhibitionCharacter::ToggleCrouch()
 
 	ExhibitionMovementComponent->ToggleCrouch();
 }
+
+FCollisionQueryParams AExhibitionCharacter::GetIgnoreCollisionParams() const
+{
+	TArray<AActor*> ChildActors;
+	
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+
+	GetAllChildActors(ChildActors);
+	Params.AddIgnoredActors(Children);
+	
+	return Params;
+}

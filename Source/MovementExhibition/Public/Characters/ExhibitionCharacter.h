@@ -34,6 +34,8 @@ public:
 
 	FORCEINLINE UExhibitionMovementComponent* GetExhibitionMovComponent() { return ExhibitionMovementComponent; };
 
+	FCollisionQueryParams GetIgnoreCollisionParams() const;
+
 // Components
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite)
