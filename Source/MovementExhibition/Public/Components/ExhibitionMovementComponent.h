@@ -7,6 +7,7 @@
 #include "ExhibitionMovementComponent.generated.h"
 
 class AExhibitionCharacter;
+class UAnimMontage;
 
 UENUM(BlueprintType)
 enum ECustomMovementMode
@@ -39,6 +40,7 @@ class MOVEMENTEXHIBITION_API UExhibitionMovementComponent : public UCharacterMov
 		
 		// Flags
 		uint8 Saved_bWantsToSprint:1 = false;
+		uint8 Saved_bWantsToRoll:1 = false;
 
 		// Vars
 		uint8 Saved_bPrevWantsToCrouch:1 = false;
@@ -85,6 +87,8 @@ protected:
 protected:
 	FORCEINLINE bool IsMovementMode(const EMovementMode& Mode) const { return MovementMode ==  Mode;}
 	FORCEINLINE bool IsCustomMovementMode(const ECustomMovementMode& InMovementMode) const;
+
+	bool IsAuthProxy() const;
 	
 // Movement modes
 protected:
@@ -96,7 +100,11 @@ protected:
 	bool CanSlide() const;
 	
 	void PhysSlide(float deltaTime, int32 Iterations);
-	
+
+	// Rolling
+	void PerformRoll();
+
+	bool CanRoll() const;
 	
 // Interface
 public:
@@ -118,14 +126,34 @@ public:
 	UFUNCTION(BlueprintPure)
 	bool IsSliding() const;
 
+	UFUNCTION(BlueprintCallable)
+	void RequestRoll();
+
+	UFUNCTION(BlueprintCallable)
+	bool IsRolling() const;
+
 	UFUNCTION(BlueprintPure)
 	FORCEINLINE float GetInitialCapsuleHalfHeight() const { return InitialCapsuleHalfHeight; };
+
+// Replication
+public:
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	UFUNCTION()
+	void OnRep_Roll();
 
 // CMC Safe Properties
 protected:
 	bool Safe_bWantsToSprint = false;
 
 	bool Safe_bPrevWantsToCrouch = false;
+
+	bool Safe_bWantsToRoll = false;
+
+// Replication properties
+protected:
+	UPROPERTY(Transient, ReplicatedUsing=OnRep_Roll)
+	bool Proxy_Roll = false;
 	
 // Standard Properties
 protected:
@@ -149,6 +177,19 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Slide")
 	float SlideBrakingDeceleration = 1000.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Roll")
+	float RollImpulse = 1000.f;
+	
+	UPROPERTY(EditAnywhere, Category="Exhibition|Roll")
+    float RollMinSpeed = 400.f;
+	
+	UPROPERTY(EditAnywhere, Category="Exhibition|Roll")
+	TObjectPtr<UAnimMontage> RollMontage;
+
+	// TODO Probably not the ideal solution
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> CurrentAnimMontage;
 	
 	UPROPERTY(Transient)
 	float InitialCapsuleHalfHeight = 88.f;

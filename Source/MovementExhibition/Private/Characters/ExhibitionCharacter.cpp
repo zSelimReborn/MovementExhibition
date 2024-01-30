@@ -14,6 +14,9 @@ AExhibitionCharacter::AExhibitionCharacter(const FObjectInitializer& Initializer
 {
 	PrimaryActorTick.bCanEverTick = true;
 
+	ExhibitionMovementComponent = Cast<UExhibitionMovementComponent>(GetCharacterMovement());
+	ExhibitionMovementComponent->SetIsReplicated(true);
+
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("Camera Boom"));
 	CameraBoom->bUsePawnControlRotation = true;
 	CameraBoom->SetupAttachment(GetRootComponent());
@@ -35,14 +38,6 @@ void AExhibitionCharacter::BeginPlay()
 	Super::BeginPlay();
 	
 }
-
-void AExhibitionCharacter::PostInitializeComponents()
-{
-	Super::PostInitializeComponents();
-
-	ExhibitionMovementComponent = Cast<UExhibitionMovementComponent>(GetCharacterMovement());
-}
-
 void AExhibitionCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);

@@ -37,6 +37,8 @@ void AExhibitionPlayerController::SetupInputComponent()
 		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &AExhibitionPlayerController::RequestSprint);
 		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &AExhibitionPlayerController::RequestFinishSprint);
 
+		EnhancedInputComponent->BindAction(RollAction, ETriggerEvent::Triggered, this, &AExhibitionPlayerController::RequestRoll);
+
 		InitializeMappingContext();
 	}
 }
@@ -109,4 +111,12 @@ void AExhibitionPlayerController::RequestFinishSprint()
 	ensure(CharacterRef->GetExhibitionMovComponent());
 
 	CharacterRef->GetExhibitionMovComponent()->FinishSprint();
+}
+
+void AExhibitionPlayerController::RequestRoll()
+{
+	ensure(CharacterRef != nullptr);
+	ensure(CharacterRef->GetExhibitionMovComponent());
+
+	CharacterRef->GetExhibitionMovComponent()->RequestRoll();
 }

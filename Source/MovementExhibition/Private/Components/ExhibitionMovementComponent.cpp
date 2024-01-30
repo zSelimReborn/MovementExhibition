@@ -6,6 +6,7 @@
 #include "Characters/ExhibitionCharacter.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
+#include "Net/UnrealNetwork.h"
 
 #pragma region Saved Move
 
@@ -19,6 +20,11 @@ bool UExhibitionMovementComponent::FSavedMove_Exhibition::CanCombineWith(const F
 	{
 		return false;
 	}
+
+	if (Saved_bWantsToRoll != NewMoveCasted->Saved_bWantsToRoll)
+	{
+		return false;
+	}
 	
 	return FSavedMove_Character::CanCombineWith(NewMove, InCharacter, MaxDelta);
 }
@@ -29,6 +35,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::Clear()
 
 	Saved_bWantsToSprint = 0;
 	Saved_bPrevWantsToCrouch = 0;
+	Saved_bWantsToRoll = 0;
 }
 
 uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() const
@@ -37,6 +44,11 @@ uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() 
 	if (Saved_bWantsToSprint)
 	{
 		CompressedFlags |= FLAG_Custom_0;
+	}
+
+	if (Saved_bWantsToRoll)
+	{
+		CompressedFlags |= FLAG_Custom_1;
 	}
 
 	return CompressedFlags;
@@ -60,6 +72,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::SetMoveFor(ACharacter*
 
 	Saved_bWantsToSprint = MovComponent->Safe_bWantsToSprint;
 	Saved_bPrevWantsToCrouch = MovComponent->Safe_bPrevWantsToCrouch;
+	Saved_bWantsToRoll = MovComponent->Safe_bWantsToRoll;
 }
 
 void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter* C)
@@ -79,6 +92,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter
 
 	MovComponent->Safe_bWantsToSprint = Saved_bWantsToSprint;
 	MovComponent->Safe_bPrevWantsToCrouch = Saved_bPrevWantsToCrouch;
+	MovComponent->Safe_bWantsToRoll = Saved_bWantsToRoll;
 }
 
 #pragma endregion 
@@ -109,6 +123,8 @@ UExhibitionMovementComponent::UExhibitionMovementComponent()
 	// This is used to slowly decrease the max speed rather than an instant drop.
 	// e.g: from sprinting to crouching 
 	bUseSeparateBrakingFriction = true;
+
+	bCanWalkOffLedgesWhenCrouching = true;
 }
 
 void UExhibitionMovementComponent::InitializeComponent()
@@ -203,20 +219,10 @@ void UExhibitionMovementComponent::OnMovementModeChanged(EMovementMode PreviousM
 
 void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float DeltaSeconds)
 {
+	const bool bAuthProxy = IsAuthProxy();
+	
 	// Slide
-	/* if (MovementMode == MOVE_Walking && !bWantsToCrouch && Safe_bPrevWantsToCrouch)
-	{
-		if (CanSlide())
-		{
-			SetMovementMode(MOVE_Custom, CMOVE_Slide);
-		}
-	}
-	else if (IsCustomMovementMode(CMOVE_Slide) && !bWantsToCrouch)
-	{
-		SetMovementMode(MOVE_Walking);
-	} */
-
-	if (bWantsToCrouch && CanSlide())
+	if (bWantsToCrouch && CanSlide() && !IsRolling())
 	{
 		SetMovementMode(MOVE_Custom, CMOVE_Slide);
 	}
@@ -224,7 +230,27 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 	{
 		SetMovementMode(MOVE_Walking);
 	}
+
+	// Roll
+	if (Safe_bWantsToRoll && CanRoll())
+	{
+		PerformRoll();
+		Proxy_Roll = !Proxy_Roll;
+	}
+
+	// Check if a montage ended
+	if (CharacterOwner->GetCurrentMontage() == nullptr)
+	{
+		// WasRolling
+		if (CurrentAnimMontage == RollMontage)
+		{
+			bWantsToCrouch = false;
+		}
+
+		CurrentAnimMontage = nullptr;
+	}
 	
+	Safe_bWantsToRoll = false;
 	Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
 }
 
@@ -238,11 +264,18 @@ void UExhibitionMovementComponent::UpdateFromCompressedFlags(uint8 Flags)
 	Super::UpdateFromCompressedFlags(Flags);
 
 	Safe_bWantsToSprint = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_0) != 0;
+	Safe_bWantsToRoll = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_1) != 0;
 }
 
 bool UExhibitionMovementComponent::IsCustomMovementMode(const ECustomMovementMode& InMovementMode) const
 {
 	return MovementMode == MOVE_Custom && CustomMovementMode == InMovementMode;
+}
+
+bool UExhibitionMovementComponent::IsAuthProxy() const
+{
+	ensure(CharacterOwner != nullptr);
+	return CharacterOwner->HasAuthority() && !CharacterOwner->IsLocallyControlled();
 }
 
 #pragma region Slide
@@ -351,7 +384,7 @@ void UExhibitionMovementComponent::PhysSlide(float deltaTime, int32 Iterations)
 				return;
 			}
 			
-			if (IsSwimming()) //just entered water
+			if (IsSwimming())
 			{
 				StartSwimming(OldLocation, OldVelocity, timeTick, remainingTime, Iterations);
 				return;
@@ -359,7 +392,6 @@ void UExhibitionMovementComponent::PhysSlide(float deltaTime, int32 Iterations)
 		}
 
 		// Update floor.
-		// StepUp might have already done it for us.
 		if (StepDownResult.bComputedFloor)
 		{
 			CurrentFloor = StepDownResult.FloorResult;
@@ -380,20 +412,42 @@ void UExhibitionMovementComponent::PhysSlide(float deltaTime, int32 Iterations)
 			}
 		}
 
-		// If we didn't move at all this iteration then abort (since future iterations will also be stuck).
 		if (UpdatedComponent->GetComponentLocation() == OldLocation)
 		{
 			remainingTime = 0.f;
 			break;
 		}
 	}
+}
 
-	/* FHitResult Hit;
-	FQuat NewRotation = FRotationMatrix::MakeFromXZ(Velocity.GetSafeNormal2D(), FVector::UpVector).ToQuat();
-	SafeMoveUpdatedComponent(FVector::ZeroVector, NewRotation, false, Hit); */
+void UExhibitionMovementComponent::PerformRoll()
+{
+	ensure(CharacterOwner != nullptr);
+
+	bWantsToCrouch = true;
+	
+	FVector RollDirection = (Acceleration.IsNearlyZero()? CharacterOwner->GetControlRotation().Vector() : Acceleration).GetSafeNormal2D();
+	RollDirection.Z = 0;
+	
+	Velocity = RollDirection * RollImpulse;
+
+	const FQuat NewRotation = FRotationMatrix::MakeFromXZ(RollDirection, FVector::UpVector).ToQuat();
+
+	FHitResult Hit;
+	SafeMoveUpdatedComponent(FVector::ZeroVector, NewRotation, false, Hit);
+	//SetMovementMode(MOVE_Falling);
+
+	CharacterOwner->PlayAnimMontage(RollMontage);
+	CurrentAnimMontage = RollMontage;
 }
 
 #pragma endregion
+
+bool UExhibitionMovementComponent::CanRoll() const
+{
+	const bool bEnoughSpeed = (Velocity.SizeSquared2D() > FMath::Pow(RollMinSpeed, 2));
+	return IsWalking() && !IsCrouching() && bEnoughSpeed;
+}
 
 void UExhibitionMovementComponent::ToggleCrouch()
 {
@@ -423,4 +477,27 @@ bool UExhibitionMovementComponent::IsSprinting() const
 bool UExhibitionMovementComponent::IsSliding() const
 {
 	return IsCustomMovementMode(CMOVE_Slide);
+}
+
+void UExhibitionMovementComponent::RequestRoll()
+{
+	Safe_bWantsToRoll = true;
+}
+
+bool UExhibitionMovementComponent::IsRolling() const
+{
+	ensure(CharacterOwner != nullptr);
+	return CharacterOwner->GetCurrentMontage() == RollMontage;
+}
+
+void UExhibitionMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_Roll, COND_SkipOwner);
+}
+
+void UExhibitionMovementComponent::OnRep_Roll()
+{
+	CharacterOwner->PlayAnimMontage(RollMontage);
 }
