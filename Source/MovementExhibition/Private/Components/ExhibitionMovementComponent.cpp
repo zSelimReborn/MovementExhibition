@@ -220,6 +220,12 @@ void UExhibitionMovementComponent::OnMovementModeChanged(EMovementMode PreviousM
 void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float DeltaSeconds)
 {
 	const bool bAuthProxy = IsAuthProxy();
+
+	// Update sprint status
+	if (Safe_bWantsToSprint && Velocity.IsNearlyZero())
+	{
+		Safe_bWantsToSprint = false;
+	}
 	
 	// Slide
 	if (bWantsToCrouch && CanSlide() && !IsRolling())
@@ -304,7 +310,7 @@ bool UExhibitionMovementComponent::CanSlide() const
 	const bool bValidSurface = GetWorld()->LineTraceTestByProfile(Start, End, ProfileName, ExhibitionCharacterRef->GetIgnoreCollisionParams());
 	const bool bEnoughSpeed = Velocity.SizeSquared2D() > FMath::Pow(SlideMinSpeed, 2);
 	
-	return bValidSurface && bEnoughSpeed;
+	return bValidSurface && bEnoughSpeed && IsMovingOnGround();
 }
 
 void UExhibitionMovementComponent::PhysSlide(float deltaTime, int32 Iterations)
@@ -454,14 +460,9 @@ void UExhibitionMovementComponent::ToggleCrouch()
 	bWantsToCrouch = !bWantsToCrouch;
 }
 
-void UExhibitionMovementComponent::RequestSprint()
+void UExhibitionMovementComponent::ToggleSprint()
 {
-	Safe_bWantsToSprint = true;
-}
-
-void UExhibitionMovementComponent::FinishSprint()
-{
-	Safe_bWantsToSprint = false;
+	Safe_bWantsToSprint = !Safe_bWantsToSprint;
 }
 
 bool UExhibitionMovementComponent::CanSprint() const

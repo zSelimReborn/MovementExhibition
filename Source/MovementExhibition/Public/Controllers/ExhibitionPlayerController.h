@@ -39,7 +39,6 @@ public:
 	void RequestCrouch();
 
 	void RequestSprint();
-	void RequestFinishSprint();
 
 	void RequestRoll();
 	

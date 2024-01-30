@@ -112,11 +112,8 @@ public:
 	void ToggleCrouch();
 
 	UFUNCTION(BlueprintCallable)
-	void RequestSprint();
-
-	UFUNCTION(BlueprintCallable)
-	void FinishSprint();
-
+	void ToggleSprint();
+	
 	UFUNCTION(BlueprintPure)
 	bool CanSprint() const;
 

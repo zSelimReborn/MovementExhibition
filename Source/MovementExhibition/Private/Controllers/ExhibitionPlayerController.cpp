@@ -34,8 +34,7 @@ void AExhibitionPlayerController::SetupInputComponent()
 
 		EnhancedInputComponent->BindAction(CrouchAction, ETriggerEvent::Triggered, this, &AExhibitionPlayerController::RequestCrouch);
 		
-		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &AExhibitionPlayerController::RequestSprint);
-		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &AExhibitionPlayerController::RequestFinishSprint);
+		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Triggered, this, &AExhibitionPlayerController::RequestSprint);
 
 		EnhancedInputComponent->BindAction(RollAction, ETriggerEvent::Triggered, this, &AExhibitionPlayerController::RequestRoll);
 
@@ -102,15 +101,7 @@ void AExhibitionPlayerController::RequestSprint()
 	ensure(CharacterRef != nullptr);
 	ensure(CharacterRef->GetExhibitionMovComponent());
 
-	CharacterRef->GetExhibitionMovComponent()->RequestSprint();
-}
-
-void AExhibitionPlayerController::RequestFinishSprint()
-{
-	ensure(CharacterRef != nullptr);
-	ensure(CharacterRef->GetExhibitionMovComponent());
-
-	CharacterRef->GetExhibitionMovComponent()->FinishSprint();
+	CharacterRef->GetExhibitionMovComponent()->ToggleSprint();
 }
 
 void AExhibitionPlayerController::RequestRoll()
