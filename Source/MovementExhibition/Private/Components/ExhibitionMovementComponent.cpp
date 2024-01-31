@@ -36,6 +36,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::Clear()
 	Saved_bWantsToSprint = 0;
 	Saved_bPrevWantsToCrouch = 0;
 	Saved_bWantsToDive = 0;
+	Saved_FlyingDiveCount = 0;
 }
 
 uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() const
@@ -73,6 +74,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::SetMoveFor(ACharacter*
 	Saved_bWantsToSprint = MovComponent->Safe_bWantsToSprint;
 	Saved_bPrevWantsToCrouch = MovComponent->Safe_bPrevWantsToCrouch;
 	Saved_bWantsToDive = MovComponent->Safe_bWantsToDive;
+	Saved_FlyingDiveCount = MovComponent->Safe_FlyingDiveCount;
 }
 
 void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter* C)
@@ -93,6 +95,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter
 	MovComponent->Safe_bWantsToSprint = Saved_bWantsToSprint;
 	MovComponent->Safe_bPrevWantsToCrouch = Saved_bPrevWantsToCrouch;
 	MovComponent->Safe_bWantsToDive = Saved_bWantsToDive;
+	MovComponent->Safe_FlyingDiveCount = Saved_FlyingDiveCount;
 }
 
 #pragma endregion 
@@ -215,6 +218,11 @@ void UExhibitionMovementComponent::OnMovementModeChanged(EMovementMode PreviousM
 	{
 		EnterSlide();
 	}
+
+	if ((PreviousMovementMode == MOVE_Falling) && IsMovingOnGround())
+	{
+		Safe_FlyingDiveCount = 0;
+	}
 }
 
 void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float DeltaSeconds)
@@ -319,6 +327,10 @@ void UExhibitionMovementComponent::OnFinishMontage(const UAnimMontage* Montage)
 	else if (Montage == DodgeBackMontage)
 	{
 		bOrientRotationToMovement = true;
+	}
+	else if (Montage == FlyingDiveMontage)
+	{
+		SetMovementMode(MOVE_Falling);
 	}
 
 	CurrentAnimMontage = nullptr;
@@ -484,12 +496,20 @@ void UExhibitionMovementComponent::PerformDive()
 	UAnimMontage* NextMontage;
 	float ApplyingImpulse;
 	
-	if (Velocity.SizeSquared2D() > FMath::Pow(DiveMinSpeed, 2) || !Acceleration.IsNearlyZero())
+	if (Velocity.SizeSquared2D() > FMath::Pow(DiveMinSpeed, 2) && !IsFalling())
 	{
 		NextMontage = DiveMontage;
 		bWantsToCrouch = true;
 
 		ApplyingImpulse = DiveImpulse;
+	}
+	else if (IsFalling())
+	{
+		NextMontage = FlyingDiveMontage;
+		ApplyingImpulse = FlyingDiveImpulse;
+		Safe_FlyingDiveCount++;
+
+		SetMovementMode(MOVE_Flying);
 	}
 	else
 	{
@@ -499,15 +519,16 @@ void UExhibitionMovementComponent::PerformDive()
 
 		ApplyingImpulse = DodgeBackImpulse;
 	}
-	
 
 	PlayMontage(NextMontage);
+	const float OldZVelocity = Velocity.Z;
 	Velocity = RollDirection * ApplyingImpulse;
+	Velocity.Z = OldZVelocity;
 }
 
 bool UExhibitionMovementComponent::CanDive() const
 {
-	return IsWalking() && !IsCrouching();
+	return (IsWalking() && !IsCrouching()) || (IsFalling() && Safe_FlyingDiveCount == 0);
 }
 
 #pragma endregion
@@ -562,6 +583,10 @@ void UExhibitionMovementComponent::OnRep_Dive()
 	{
 		// If player wants to crouch he requested a dive
 		CharacterOwner->PlayAnimMontage(DiveMontage);
+	}
+	else if (IsFalling())
+	{
+		CharacterOwner->PlayAnimMontage(FlyingDiveMontage);
 	}
 	else
 	{

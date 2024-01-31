@@ -44,6 +44,7 @@ class MOVEMENTEXHIBITION_API UExhibitionMovementComponent : public UCharacterMov
 
 		// Vars
 		uint8 Saved_bPrevWantsToCrouch:1 = false;
+		int32 Saved_FlyingDiveCount = 0;
 	};
 
 	class FNetworkPredictionData_Client_Exhibition : public FNetworkPredictionData_Client_Character
@@ -156,6 +157,10 @@ protected:
 
 	bool Safe_bWantsToDive = false;
 
+// FSavedMove properties
+protected:
+	int32 Safe_FlyingDiveCount = 0;
+	
 // Replication properties
 protected:
 	UPROPERTY(Transient, ReplicatedUsing=OnRep_Dive)
@@ -191,6 +196,9 @@ protected:
 	float DiveImpulse = 1000.f;
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Dive")
+	float FlyingDiveImpulse = 500.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Dive")
 	float DodgeBackImpulse = 750.f;
 	
 	UPROPERTY(EditAnywhere, Category="Exhibition|Dive")
@@ -198,6 +206,9 @@ protected:
 	
 	UPROPERTY(EditAnywhere, Category="Exhibition|Dive")
 	TObjectPtr<UAnimMontage> DiveMontage;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Dive")
+	TObjectPtr<UAnimMontage> FlyingDiveMontage;
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Dive")
 	TObjectPtr<UAnimMontage> DodgeBackMontage;
