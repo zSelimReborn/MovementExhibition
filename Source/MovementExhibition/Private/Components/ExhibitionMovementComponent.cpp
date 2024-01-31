@@ -247,17 +247,25 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 	// Check if a montage ended
 	if (CharacterOwner->GetCurrentMontage() == nullptr)
 	{
-		// WasRolling
-		if (CurrentAnimMontage == RollMontage)
-		{
-			bWantsToCrouch = false;
-		}
-
-		CurrentAnimMontage = nullptr;
+		OnFinishMontage(CurrentAnimMontage);
 	}
 	
 	Safe_bWantsToRoll = false;
 	Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
+}
+
+bool UExhibitionMovementComponent::DoJump(bool bReplayingMoves)
+{
+	const bool bJumped = Super::DoJump(bReplayingMoves);
+	if (bJumped)
+	{
+		if (CharacterOwner->JumpCurrentCount > 1)
+		{
+			PlayMontage(JumpExtraMontage);
+		}
+	}
+
+	return bJumped;
 }
 
 void UExhibitionMovementComponent::OnMovementUpdated(float DeltaSeconds, const FVector& OldLocation, const FVector& OldVelocity)
@@ -276,6 +284,39 @@ void UExhibitionMovementComponent::UpdateFromCompressedFlags(uint8 Flags)
 bool UExhibitionMovementComponent::IsCustomMovementMode(const ECustomMovementMode& InMovementMode) const
 {
 	return MovementMode == MOVE_Custom && CustomMovementMode == InMovementMode;
+}
+
+void UExhibitionMovementComponent::PlayMontage(UAnimMontage* InMontage)
+{
+	ensure(CharacterOwner != nullptr);
+
+	if (InMontage == nullptr)
+	{
+		return;
+	}
+	
+	if (CurrentAnimMontage == InMontage)
+	{
+		return;
+	}
+	
+	if (CurrentAnimMontage != nullptr)
+	{
+		OnFinishMontage(CurrentAnimMontage);
+	}
+	
+	CharacterOwner->PlayAnimMontage(InMontage);
+	CurrentAnimMontage = InMontage;
+}
+
+void UExhibitionMovementComponent::OnFinishMontage(const UAnimMontage* Montage)
+{
+	if (Montage == RollMontage)
+	{
+		bWantsToCrouch = false;
+	}
+
+	CurrentAnimMontage = nullptr;
 }
 
 bool UExhibitionMovementComponent::IsAuthProxy() const
@@ -443,8 +484,7 @@ void UExhibitionMovementComponent::PerformRoll()
 	SafeMoveUpdatedComponent(FVector::ZeroVector, NewRotation, false, Hit);
 	//SetMovementMode(MOVE_Falling);
 
-	CharacterOwner->PlayAnimMontage(RollMontage);
-	CurrentAnimMontage = RollMontage;
+	PlayMontage(RollMontage);
 }
 
 #pragma endregion

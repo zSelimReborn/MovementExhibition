@@ -30,6 +30,8 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void ToggleCrouch();
 
+	virtual void Jump() override;
+
 	FORCEINLINE UExhibitionMovementComponent* GetExhibitionMovComponent() { return ExhibitionMovementComponent; };
 
 	FCollisionQueryParams GetIgnoreCollisionParams() const;

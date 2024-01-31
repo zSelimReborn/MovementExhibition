@@ -78,6 +78,8 @@ public:
 
 	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
 
+	virtual bool DoJump(bool bReplayingMoves) override;
+
 protected:
 	virtual void UpdateFromCompressedFlags(uint8 Flags) override;
 
@@ -88,6 +90,10 @@ protected:
 	FORCEINLINE bool IsMovementMode(const EMovementMode& Mode) const { return MovementMode ==  Mode;}
 	FORCEINLINE bool IsCustomMovementMode(const ECustomMovementMode& InMovementMode) const;
 
+	void PlayMontage(UAnimMontage* InMontage);
+
+	void OnFinishMontage(const UAnimMontage* Montage);
+	
 	bool IsAuthProxy() const;
 	
 // Movement modes
@@ -183,6 +189,9 @@ protected:
 	
 	UPROPERTY(EditAnywhere, Category="Exhibition|Roll")
 	TObjectPtr<UAnimMontage> RollMontage;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Jump")
+	TObjectPtr<UAnimMontage> JumpExtraMontage;
 
 	// TODO Probably not the ideal solution
 	UPROPERTY(Transient)

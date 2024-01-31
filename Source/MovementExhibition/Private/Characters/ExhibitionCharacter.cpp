@@ -38,6 +38,7 @@ void AExhibitionCharacter::BeginPlay()
 	Super::BeginPlay();
 	
 }
+
 void AExhibitionCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
@@ -49,6 +50,18 @@ void AExhibitionCharacter::ToggleCrouch()
 	ensure(ExhibitionMovementComponent);
 
 	ExhibitionMovementComponent->ToggleCrouch();
+}
+
+void AExhibitionCharacter::Jump()
+{
+	if (ExhibitionMovementComponent->IsCrouching())
+	{
+		ExhibitionMovementComponent->ToggleCrouch();
+	}
+	else
+	{
+		Super::Jump();
+	}
 }
 
 FCollisionQueryParams AExhibitionCharacter::GetIgnoreCollisionParams() const
