@@ -311,9 +311,13 @@ void UExhibitionMovementComponent::PlayMontage(UAnimMontage* InMontage)
 
 void UExhibitionMovementComponent::OnFinishMontage(const UAnimMontage* Montage)
 {
-	if (Montage == RollMontage)
+	if (Montage == DiveMontage)
 	{
 		bWantsToCrouch = false;
+	}
+	else if (Montage == DodgeBackMontage)
+	{
+		bOrientRotationToMovement = true;
 	}
 
 	CurrentAnimMontage = nullptr;
@@ -467,33 +471,45 @@ void UExhibitionMovementComponent::PhysSlide(float deltaTime, int32 Iterations)
 	}
 }
 
+#pragma endregion
+
+#pragma region Roll
+
 void UExhibitionMovementComponent::PerformRoll()
 {
 	ensure(CharacterOwner != nullptr);
-
-	bWantsToCrouch = true;
 	
-	FVector RollDirection = (Acceleration.IsNearlyZero()? CharacterOwner->GetControlRotation().Vector() : Acceleration).GetSafeNormal2D();
-	RollDirection.Z = 0;
+	FVector RollDirection = (Acceleration.IsNearlyZero()? CharacterOwner->GetActorForwardVector() : Acceleration).GetSafeNormal2D();
+	UAnimMontage* NextMontage;
+	float ApplyingImpulse;
 	
-	Velocity = RollDirection * RollImpulse;
+	if (Velocity.SizeSquared2D() > FMath::Pow(DiveMinSpeed, 2) || !Acceleration.IsNearlyZero())
+	{
+		NextMontage = DiveMontage;
+		bWantsToCrouch = true;
 
-	const FQuat NewRotation = FRotationMatrix::MakeFromXZ(RollDirection, FVector::UpVector).ToQuat();
+		ApplyingImpulse = DiveImpulse;
+	}
+	else
+	{
+		RollDirection = -RollDirection;
+		NextMontage = DodgeBackMontage;
+		bOrientRotationToMovement = false;
 
-	FHitResult Hit;
-	SafeMoveUpdatedComponent(FVector::ZeroVector, NewRotation, false, Hit);
-	//SetMovementMode(MOVE_Falling);
+		ApplyingImpulse = DodgeBackImpulse;
+	}
+	
 
-	PlayMontage(RollMontage);
+	PlayMontage(NextMontage);
+	Velocity = RollDirection * ApplyingImpulse;
 }
-
-#pragma endregion
 
 bool UExhibitionMovementComponent::CanRoll() const
 {
-	const bool bEnoughSpeed = (Velocity.SizeSquared2D() > FMath::Pow(RollMinSpeed, 2));
-	return IsWalking() && !IsCrouching() && bEnoughSpeed;
+	return IsWalking() && !IsCrouching();
 }
+
+#pragma endregion
 
 void UExhibitionMovementComponent::ToggleCrouch()
 {
@@ -528,7 +544,7 @@ void UExhibitionMovementComponent::RequestRoll()
 bool UExhibitionMovementComponent::IsRolling() const
 {
 	ensure(CharacterOwner != nullptr);
-	return CharacterOwner->GetCurrentMontage() == RollMontage;
+	return CharacterOwner->GetCurrentMontage() == DiveMontage;
 }
 
 void UExhibitionMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -540,5 +556,5 @@ void UExhibitionMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimePr
 
 void UExhibitionMovementComponent::OnRep_Roll()
 {
-	CharacterOwner->PlayAnimMontage(RollMontage);
+	CharacterOwner->PlayAnimMontage(DiveMontage);
 }

@@ -181,14 +181,20 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Exhibition|Slide")
 	float SlideBrakingDeceleration = 1000.f;
 
-	UPROPERTY(EditAnywhere, Category="Exhibition|Roll")
-	float RollImpulse = 1000.f;
+	UPROPERTY(EditAnywhere, Category="Exhibition|Dive")
+	float DiveImpulse = 1000.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Dive")
+	float DodgeBackImpulse = 750.f;
 	
-	UPROPERTY(EditAnywhere, Category="Exhibition|Roll")
-    float RollMinSpeed = 400.f;
+	UPROPERTY(EditAnywhere, Category="Exhibition|Dive")
+    float DiveMinSpeed = 400.f;
 	
-	UPROPERTY(EditAnywhere, Category="Exhibition|Roll")
-	TObjectPtr<UAnimMontage> RollMontage;
+	UPROPERTY(EditAnywhere, Category="Exhibition|Dive")
+	TObjectPtr<UAnimMontage> DiveMontage;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Dive")
+	TObjectPtr<UAnimMontage> DodgeBackMontage;
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Jump")
 	TObjectPtr<UAnimMontage> JumpExtraMontage;
