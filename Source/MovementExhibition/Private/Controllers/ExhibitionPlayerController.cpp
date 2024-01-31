@@ -109,5 +109,5 @@ void AExhibitionPlayerController::RequestRoll()
 	ensure(CharacterRef != nullptr);
 	ensure(CharacterRef->GetExhibitionMovComponent());
 
-	CharacterRef->GetExhibitionMovComponent()->RequestRoll();
+	CharacterRef->GetExhibitionMovComponent()->RequestDive();
 }

@@ -40,7 +40,7 @@ class MOVEMENTEXHIBITION_API UExhibitionMovementComponent : public UCharacterMov
 		
 		// Flags
 		uint8 Saved_bWantsToSprint:1 = false;
-		uint8 Saved_bWantsToRoll:1 = false;
+		uint8 Saved_bWantsToDive:1 = false;
 
 		// Vars
 		uint8 Saved_bPrevWantsToCrouch:1 = false;
@@ -107,10 +107,10 @@ protected:
 	
 	void PhysSlide(float deltaTime, int32 Iterations);
 
-	// Rolling
-	void PerformRoll();
+	// Diving
+	void PerformDive();
 
-	bool CanRoll() const;
+	bool CanDive() const;
 	
 // Interface
 public:
@@ -130,10 +130,10 @@ public:
 	bool IsSliding() const;
 
 	UFUNCTION(BlueprintCallable)
-	void RequestRoll();
+	void RequestDive();
 
 	UFUNCTION(BlueprintCallable)
-	bool IsRolling() const;
+	bool IsDiving() const;
 
 	UFUNCTION(BlueprintPure)
 	FORCEINLINE float GetInitialCapsuleHalfHeight() const { return InitialCapsuleHalfHeight; };
@@ -143,7 +143,10 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION()
-	void OnRep_Roll();
+	void OnRep_Dive();
+
+	UFUNCTION()
+	void OnRep_JumpExtra();
 
 // CMC Safe Properties
 protected:
@@ -151,12 +154,15 @@ protected:
 
 	bool Safe_bPrevWantsToCrouch = false;
 
-	bool Safe_bWantsToRoll = false;
+	bool Safe_bWantsToDive = false;
 
 // Replication properties
 protected:
-	UPROPERTY(Transient, ReplicatedUsing=OnRep_Roll)
-	bool Proxy_Roll = false;
+	UPROPERTY(Transient, ReplicatedUsing=OnRep_Dive)
+	bool Proxy_Dive = false;
+	
+	UPROPERTY(Transient, ReplicatedUsing=OnRep_JumpExtra)
+	bool Proxy_JumpExtra = false;
 	
 // Standard Properties
 protected:

@@ -21,7 +21,7 @@ bool UExhibitionMovementComponent::FSavedMove_Exhibition::CanCombineWith(const F
 		return false;
 	}
 
-	if (Saved_bWantsToRoll != NewMoveCasted->Saved_bWantsToRoll)
+	if (Saved_bWantsToDive != NewMoveCasted->Saved_bWantsToDive)
 	{
 		return false;
 	}
@@ -35,7 +35,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::Clear()
 
 	Saved_bWantsToSprint = 0;
 	Saved_bPrevWantsToCrouch = 0;
-	Saved_bWantsToRoll = 0;
+	Saved_bWantsToDive = 0;
 }
 
 uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() const
@@ -46,7 +46,7 @@ uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() 
 		CompressedFlags |= FLAG_Custom_0;
 	}
 
-	if (Saved_bWantsToRoll)
+	if (Saved_bWantsToDive)
 	{
 		CompressedFlags |= FLAG_Custom_1;
 	}
@@ -72,7 +72,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::SetMoveFor(ACharacter*
 
 	Saved_bWantsToSprint = MovComponent->Safe_bWantsToSprint;
 	Saved_bPrevWantsToCrouch = MovComponent->Safe_bPrevWantsToCrouch;
-	Saved_bWantsToRoll = MovComponent->Safe_bWantsToRoll;
+	Saved_bWantsToDive = MovComponent->Safe_bWantsToDive;
 }
 
 void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter* C)
@@ -92,7 +92,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter
 
 	MovComponent->Safe_bWantsToSprint = Saved_bWantsToSprint;
 	MovComponent->Safe_bPrevWantsToCrouch = Saved_bPrevWantsToCrouch;
-	MovComponent->Safe_bWantsToRoll = Saved_bWantsToRoll;
+	MovComponent->Safe_bWantsToDive = Saved_bWantsToDive;
 }
 
 #pragma endregion 
@@ -228,7 +228,7 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 	}
 	
 	// Slide
-	if (bWantsToCrouch && CanSlide() && !IsRolling())
+	if (bWantsToCrouch && CanSlide() && !IsDiving())
 	{
 		SetMovementMode(MOVE_Custom, CMOVE_Slide);
 	}
@@ -238,10 +238,10 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 	}
 
 	// Roll
-	if (Safe_bWantsToRoll && CanRoll())
+	if (Safe_bWantsToDive && CanDive())
 	{
-		PerformRoll();
-		Proxy_Roll = !Proxy_Roll;
+		PerformDive();
+		Proxy_Dive = !Proxy_Dive;
 	}
 
 	// Check if a montage ended
@@ -250,7 +250,7 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 		OnFinishMontage(CurrentAnimMontage);
 	}
 	
-	Safe_bWantsToRoll = false;
+	Safe_bWantsToDive = false;
 	Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
 }
 
@@ -262,6 +262,7 @@ bool UExhibitionMovementComponent::DoJump(bool bReplayingMoves)
 		if (CharacterOwner->JumpCurrentCount > 1)
 		{
 			PlayMontage(JumpExtraMontage);
+			Proxy_JumpExtra = !Proxy_JumpExtra;
 		}
 	}
 
@@ -278,7 +279,7 @@ void UExhibitionMovementComponent::UpdateFromCompressedFlags(uint8 Flags)
 	Super::UpdateFromCompressedFlags(Flags);
 
 	Safe_bWantsToSprint = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_0) != 0;
-	Safe_bWantsToRoll = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_1) != 0;
+	Safe_bWantsToDive = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_1) != 0;
 }
 
 bool UExhibitionMovementComponent::IsCustomMovementMode(const ECustomMovementMode& InMovementMode) const
@@ -475,7 +476,7 @@ void UExhibitionMovementComponent::PhysSlide(float deltaTime, int32 Iterations)
 
 #pragma region Roll
 
-void UExhibitionMovementComponent::PerformRoll()
+void UExhibitionMovementComponent::PerformDive()
 {
 	ensure(CharacterOwner != nullptr);
 	
@@ -504,7 +505,7 @@ void UExhibitionMovementComponent::PerformRoll()
 	Velocity = RollDirection * ApplyingImpulse;
 }
 
-bool UExhibitionMovementComponent::CanRoll() const
+bool UExhibitionMovementComponent::CanDive() const
 {
 	return IsWalking() && !IsCrouching();
 }
@@ -536,12 +537,12 @@ bool UExhibitionMovementComponent::IsSliding() const
 	return IsCustomMovementMode(CMOVE_Slide);
 }
 
-void UExhibitionMovementComponent::RequestRoll()
+void UExhibitionMovementComponent::RequestDive()
 {
-	Safe_bWantsToRoll = true;
+	Safe_bWantsToDive = true;
 }
 
-bool UExhibitionMovementComponent::IsRolling() const
+bool UExhibitionMovementComponent::IsDiving() const
 {
 	ensure(CharacterOwner != nullptr);
 	return CharacterOwner->GetCurrentMontage() == DiveMontage;
@@ -551,10 +552,25 @@ void UExhibitionMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimePr
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_Roll, COND_SkipOwner);
+	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_Dive, COND_SkipOwner);
+	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_JumpExtra, COND_SkipOwner);
 }
 
-void UExhibitionMovementComponent::OnRep_Roll()
+void UExhibitionMovementComponent::OnRep_Dive()
 {
-	CharacterOwner->PlayAnimMontage(DiveMontage);
+	if (bWantsToCrouch)
+	{
+		// If player wants to crouch he requested a dive
+		CharacterOwner->PlayAnimMontage(DiveMontage);
+	}
+	else
+	{
+		// else he requested a dodge
+		CharacterOwner->PlayAnimMontage(DodgeBackMontage);
+	}
+}
+
+void UExhibitionMovementComponent::OnRep_JumpExtra()
+{
+	CharacterOwner->PlayAnimMontage(JumpExtraMontage);
 }
