@@ -17,6 +17,10 @@ enum ECustomMovementMode
 	CMOVE_MAX			UMETA(Hidden),
 };
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEnterSlideDelegate);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExitSlideDelegate);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDiveDelegate);
+
 /**
  * 
  */
@@ -225,4 +229,15 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<AExhibitionCharacter> ExhibitionCharacterRef;
+
+// Delegates
+protected:
+	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
+	FOnEnterSlideDelegate OnEnterSlide;
+
+	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
+	FOnExitSlideDelegate OnExitSlide;
+
+	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
+	FOnDiveDelegate OnDive;
 };

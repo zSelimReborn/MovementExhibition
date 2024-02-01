@@ -352,12 +352,16 @@ void UExhibitionMovementComponent::EnterSlide()
 	Velocity += Velocity.GetSafeNormal2D() * SlideEnterImpulse;
 
 	FindFloor(UpdatedComponent->GetComponentLocation(), CurrentFloor, true, nullptr);
+
+	OnEnterSlide.Broadcast();
 }
 
 void UExhibitionMovementComponent::FinishSlide()
 {
 	bWantsToCrouch = false;
 	bOrientRotationToMovement = true;
+
+	OnExitSlide.Broadcast();
 }
 
 bool UExhibitionMovementComponent::CanSlide() const
@@ -502,6 +506,8 @@ void UExhibitionMovementComponent::PerformDive()
 		bWantsToCrouch = true;
 
 		ApplyingImpulse = DiveImpulse;
+
+		OnDive.Broadcast();
 	}
 	else if (IsFalling())
 	{
@@ -583,6 +589,7 @@ void UExhibitionMovementComponent::OnRep_Dive()
 	{
 		// If player wants to crouch he requested a dive
 		CharacterOwner->PlayAnimMontage(DiveMontage);
+		OnDive.Broadcast();
 	}
 	else if (IsFalling())
 	{
