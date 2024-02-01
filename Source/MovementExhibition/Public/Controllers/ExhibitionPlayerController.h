@@ -41,6 +41,9 @@ public:
 	void RequestSprint();
 
 	void RequestRoll();
+
+	void RequestHook();
+	void RequestReleaseHook();
 	
 // Inputs
 protected:
@@ -61,6 +64,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input Actions")
 	TObjectPtr<UInputAction> RollAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input Actions")
+	TObjectPtr<UInputAction> HookAction;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input Actions")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;

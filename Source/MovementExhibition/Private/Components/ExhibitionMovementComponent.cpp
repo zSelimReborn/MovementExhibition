@@ -6,6 +6,7 @@
 #include "Characters/ExhibitionCharacter.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
+#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 
 #pragma region Saved Move
@@ -25,6 +26,11 @@ bool UExhibitionMovementComponent::FSavedMove_Exhibition::CanCombineWith(const F
 	{
 		return false;
 	}
+
+	if (Saved_bWantsToHook != NewMoveCasted->Saved_bWantsToHook)
+	{
+		return false;
+	}
 	
 	return FSavedMove_Character::CanCombineWith(NewMove, InCharacter, MaxDelta);
 }
@@ -37,6 +43,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::Clear()
 	Saved_bPrevWantsToCrouch = 0;
 	Saved_bWantsToDive = 0;
 	Saved_FlyingDiveCount = 0;
+	Saved_bWantsToHook = 0;
 }
 
 uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() const
@@ -50,6 +57,11 @@ uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() 
 	if (Saved_bWantsToDive)
 	{
 		CompressedFlags |= FLAG_Custom_1;
+	}
+
+	if (Saved_bWantsToHook)
+	{
+		CompressedFlags |= FLAG_Custom_2;
 	}
 
 	return CompressedFlags;
@@ -75,6 +87,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::SetMoveFor(ACharacter*
 	Saved_bPrevWantsToCrouch = MovComponent->Safe_bPrevWantsToCrouch;
 	Saved_bWantsToDive = MovComponent->Safe_bWantsToDive;
 	Saved_FlyingDiveCount = MovComponent->Safe_FlyingDiveCount;
+	Saved_bWantsToHook = MovComponent->Safe_bWantsToHook;
 }
 
 void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter* C)
@@ -96,6 +109,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter
 	MovComponent->Safe_bPrevWantsToCrouch = Saved_bPrevWantsToCrouch;
 	MovComponent->Safe_bWantsToDive = Saved_bWantsToDive;
 	MovComponent->Safe_FlyingDiveCount = Saved_FlyingDiveCount;
+	MovComponent->Safe_bWantsToHook = Saved_bWantsToHook;
 }
 
 #pragma endregion 
@@ -200,6 +214,9 @@ void UExhibitionMovementComponent::PhysCustom(float deltaTime, int32 Iterations)
 	case CMOVE_Slide:
 		PhysSlide(deltaTime, Iterations);
 		break;
+	case CMOVE_Hook:
+		PhysHook(deltaTime, Iterations);
+		break;
 	default:
 		UE_LOG(LogTemp, Fatal, TEXT("PhysCustom Invalid Custom Movement Mode: %d"), CustomMovementMode);
 	}
@@ -250,6 +267,25 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 	{
 		PerformDive();
 		Proxy_Dive = !Proxy_Dive;
+	}
+
+	// Try hooking
+	if (Safe_bWantsToHook)
+	{
+		if (TryHook())
+		{
+			SetMovementMode(MOVE_Custom, CMOVE_Hook);
+			HookTotalTime = 0.f;
+			HookCurrentDistance = FVector::Dist(CharacterOwner->GetActorLocation(), CurrentHook->GetActorLocation());
+		}
+	}
+	else if (IsHooking())
+	{
+		// TODO Add force if jumped
+		SetMovementMode(MOVE_Falling);
+		CurrentHook = nullptr;
+		HookTotalTime = 0.f;
+		HookCurrentDistance = 0.f;
 	}
 
 	// Check if a montage ended
@@ -340,6 +376,15 @@ bool UExhibitionMovementComponent::IsAuthProxy() const
 {
 	ensure(CharacterOwner != nullptr);
 	return CharacterOwner->HasAuthority() && !CharacterOwner->IsLocallyControlled();
+}
+
+float UExhibitionMovementComponent::GetAngleInDegrees(const FVector& First, const FVector& Second) const
+{
+	const FVector FirstNormalized = First.GetSafeNormal();
+	const FVector SecondNormalized = Second.GetSafeNormal();
+
+	const float Dot = FirstNormalized | SecondNormalized;
+	return FMath::RadiansToDegrees(FMath::Acos(Dot));
 }
 
 #pragma region Slide
@@ -539,6 +584,189 @@ bool UExhibitionMovementComponent::CanDive() const
 
 #pragma endregion
 
+#pragma region Hooking
+
+bool UExhibitionMovementComponent::TryHook()
+{
+	if (!IsFalling() && !IsWalking())
+	{
+		return false;
+	}
+	
+	TArray<AActor*> AllHooks;
+	// Can be improved
+	UGameplayStatics::GetAllActorsWithTag(GetWorld(), TagHookName, AllHooks);
+
+	if (AllHooks.IsEmpty())
+	{
+		return false;
+	}
+
+	for (AActor* Hook : AllHooks)
+	{
+		if (CanUseHook(Hook))
+		{
+			CurrentHook = Hook;
+			break;
+		}
+	}
+
+	// TODO transition to fixed height
+	
+	return CurrentHook != nullptr;
+}
+
+bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook) const
+{
+	if (!Hook)
+	{
+		return false;
+	}
+
+	const FVector CharacterLocation = CharacterOwner->GetActorLocation();
+	const FRotator ControlRotation = CharacterOwner->GetControlRotation();
+	const FVector ControlLook = ControlRotation.Vector().GetSafeNormal();
+	const FVector HookLocation = Hook->GetActorLocation();
+	const FVector ControlLookToHook = (HookLocation - CharacterLocation).GetSafeNormal();
+
+	DrawDebugLine(
+		GetWorld(),
+		CharacterLocation,
+		CharacterLocation + ControlLook * 500.f,
+		FColor::Red,
+		false,
+		5.f
+	);
+	
+	DrawDebugLine(
+		GetWorld(),
+		CharacterLocation,
+		CharacterLocation + ControlLookToHook * 500.f,
+		FColor::Green,
+		false,
+		5.f
+	);
+
+	const float DistToHook = FVector::Dist(CharacterLocation, HookLocation);
+	const bool bNear = FVector::DistSquared(CharacterLocation, HookLocation) <= FMath::Pow(MinHookDistance, 2);
+
+	UE_LOG(LogTemp, Error, TEXT("Dist to hook: %.2f"), DistToHook);
+	if (!bNear)
+	{
+		return false;
+	}
+
+	const bool bInFov = (ControlLook | ControlLookToHook) >= 0.8f;
+	UE_LOG(LogTemp, Error, TEXT("Dot to hook: %.2f"), ControlLook | ControlLookToHook);
+	if (!bInFov)
+	{
+		return false;
+	}
+
+	FHitResult Hit;
+	FCollisionQueryParams IgnoreParams = ExhibitionCharacterRef->GetIgnoreCollisionParams();
+	IgnoreParams.AddIgnoredActor(Hook);
+	const bool bIsBlocked = GetWorld()->LineTraceSingleByProfile(
+		Hit,
+		CharacterLocation,
+		HookLocation,
+		FName(TEXT("BlockAll")),
+		IgnoreParams
+	);
+
+	// TODO Add busy check?
+	
+	return !bIsBlocked;
+}
+
+void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
+{
+	if (deltaTime < MIN_TICK_TIME)
+	{
+		return;
+	}
+
+	if (CurrentHook == nullptr)
+	{
+		SetMovementMode(MOVE_Falling);
+		StartNewPhysics(deltaTime, Iterations);
+		return;
+	}
+	
+	if (!CharacterOwner || (!CharacterOwner->Controller && !bRunPhysicsWithNoController && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && (CharacterOwner->GetLocalRole() != ROLE_SimulatedProxy)))
+	{
+		Acceleration = FVector::ZeroVector;
+		Velocity = FVector::ZeroVector;
+		return;
+	}
+
+	bJustTeleported = false;
+	float remainingTime = deltaTime;
+
+	const float DistanceToHook = HookCurrentDistance - 50.f;
+	// Sub-stepping
+	while ((remainingTime >= MIN_TICK_TIME) && (Iterations < MaxSimulationIterations) && CharacterOwner && (CharacterOwner->Controller || bRunPhysicsWithNoController || HasAnimRootMotion() || CurrentRootMotion.HasOverrideVelocity() || (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy)))
+	{
+		Iterations++;
+		bJustTeleported = false;
+		const float timeTick = GetSimulationTimeStep(remainingTime, Iterations);
+		remainingTime -= timeTick;
+
+		// Save current values
+		const FVector OldLocation = UpdatedComponent->GetComponentLocation();
+		const FVector OldVelocity = Velocity;
+
+		const FVector HookToCharacter = UpdatedComponent->GetComponentLocation() - CurrentHook->GetActorLocation();
+		float Angle = GetAngleInDegrees(HookToCharacter, -CurrentHook->GetActorUpVector());
+		const float Cross = (HookToCharacter ^ -CurrentHook->GetActorUpVector()).Z;
+		
+		Angle = FMath::Clamp(Angle, -MaxHookAngle, MaxHookAngle);
+		Angle = (Cross > 0)? Angle : -Angle;
+		UE_LOG(LogTemp, Error, TEXT("Angle Deg: %.2f | CrossZ: %.2f"), Angle, Cross);
+		
+		HookTotalTime += timeTick;
+		const FVector Delta1 = FVector(
+			DistanceToHook * sin(MaxHookAngle * sin(HookTotalTime) / 30),
+			0.0f,
+			-cos(MaxHookAngle * sin(HookTotalTime) / 30) * DistanceToHook
+		);
+		const FVector NextPosition = CurrentHook->GetActorLocation() + Delta1;
+		const FVector DeltaVelocity = NextPosition - UpdatedComponent->GetComponentLocation();
+
+		Velocity = DeltaVelocity * 10.f * timeTick;
+		// Apply acceleration
+		CalcVelocity(timeTick, 0.f, false, 0.f);
+
+		// Move params
+		const FVector MoveVelocity = Velocity;
+		const FVector Delta = timeTick * MoveVelocity;
+		const bool bZeroDelta = Delta.IsNearlyZero();
+		
+		if (bZeroDelta)
+		{
+			remainingTime = 0.f;
+		}
+		else
+		{
+			FHitResult MoveHit;
+			SafeMoveUpdatedComponent(Delta, UpdatedComponent->GetComponentQuat(), true, MoveHit);
+			// Make velocity reflect actual move
+			if( !bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && timeTick >= MIN_TICK_TIME)
+			{
+				Velocity = (UpdatedComponent->GetComponentLocation() - OldLocation) / timeTick;
+			}
+		}
+
+		if (UpdatedComponent->GetComponentLocation() == OldLocation)
+		{
+			remainingTime = 0.f;
+			break;
+		}
+	}
+}
+
+#pragma endregion
+
 void UExhibitionMovementComponent::ToggleCrouch()
 {
 	bWantsToCrouch = !bWantsToCrouch;
@@ -573,6 +801,21 @@ bool UExhibitionMovementComponent::IsDiving() const
 {
 	ensure(CharacterOwner != nullptr);
 	return CharacterOwner->GetCurrentMontage() == DiveMontage;
+}
+
+void UExhibitionMovementComponent::RequestHook()
+{
+	Safe_bWantsToHook = true;
+}
+
+void UExhibitionMovementComponent::ReleaseHook()
+{
+	Safe_bWantsToHook = false;
+}
+
+bool UExhibitionMovementComponent::IsHooking() const
+{
+	return IsCustomMovementMode(CMOVE_Hook);
 }
 
 void UExhibitionMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

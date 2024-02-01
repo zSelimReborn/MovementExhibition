@@ -14,6 +14,7 @@ enum ECustomMovementMode
 {
 	CMOVE_None			UMETA(Hidden),
 	CMOVE_Slide			UMETA(DisplayName = "Slide"),
+	CMOVE_Hook			UMETA(DisplayName = "Hook"),
 	CMOVE_MAX			UMETA(Hidden),
 };
 
@@ -45,6 +46,7 @@ class MOVEMENTEXHIBITION_API UExhibitionMovementComponent : public UCharacterMov
 		// Flags
 		uint8 Saved_bWantsToSprint:1 = false;
 		uint8 Saved_bWantsToDive:1 = false;
+		uint8 Saved_bWantsToHook:1 = false;
 
 		// Vars
 		uint8 Saved_bPrevWantsToCrouch:1 = false;
@@ -100,6 +102,8 @@ protected:
 	void OnFinishMontage(const UAnimMontage* Montage);
 	
 	bool IsAuthProxy() const;
+
+	float GetAngleInDegrees(const FVector& First, const FVector& Second) const;
 	
 // Movement modes
 protected:
@@ -116,6 +120,13 @@ protected:
 	void PerformDive();
 
 	bool CanDive() const;
+
+	// Hooking
+	bool TryHook();
+
+	bool CanUseHook(const AActor* Hook) const;
+
+	void PhysHook(float deltaTime, int32 Iterations);
 	
 // Interface
 public:
@@ -140,6 +151,15 @@ public:
 	UFUNCTION(BlueprintCallable)
 	bool IsDiving() const;
 
+	UFUNCTION(BlueprintCallable)
+	void RequestHook();
+
+	UFUNCTION(BlueprintCallable)
+	void ReleaseHook();
+
+	UFUNCTION(BlueprintPure)
+	bool IsHooking() const;
+
 	UFUNCTION(BlueprintPure)
 	FORCEINLINE float GetInitialCapsuleHalfHeight() const { return InitialCapsuleHalfHeight; };
 
@@ -160,6 +180,8 @@ protected:
 	bool Safe_bPrevWantsToCrouch = false;
 
 	bool Safe_bWantsToDive = false;
+
+	bool Safe_bWantsToHook = false;
 
 // FSavedMove properties
 protected:
@@ -219,6 +241,24 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Jump")
 	TObjectPtr<UAnimMontage> JumpExtraMontage;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	FName TagHookName = NAME_None;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	float MinHookDistance = 5000.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	float MaxHookAngle = 40.f;
+
+	UPROPERTY(Transient)
+	float HookTotalTime = 0.f;
+	
+	UPROPERTY(Transient)
+	float HookCurrentDistance = 0.f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AActor> CurrentHook;
 
 	// TODO Probably not the ideal solution
 	UPROPERTY(Transient)
