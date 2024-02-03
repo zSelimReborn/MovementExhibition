@@ -43,7 +43,6 @@ public:
 	void RequestRoll();
 
 	void RequestHook();
-	void RequestReleaseHook();
 	
 // Inputs
 protected:

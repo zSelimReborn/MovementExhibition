@@ -102,8 +102,16 @@ protected:
 	void OnFinishMontage(const UAnimMontage* Montage);
 	
 	bool IsAuthProxy() const;
+	
+	float GetCapsuleRadius() const;
 
-	float GetAngleInDegrees(const FVector& First, const FVector& Second) const;
+	float GetCapsuleHalfHeight() const;
+
+	void ToggleHookCable() const;
+
+	void UpdateHookCable() const;
+
+	void ResetHookCable() const;
 	
 // Movement modes
 protected:
@@ -125,6 +133,10 @@ protected:
 	bool TryHook();
 
 	bool CanUseHook(const AActor* Hook) const;
+
+	void EnterHook();
+
+	void FinishHook();
 
 	void PhysHook(float deltaTime, int32 Iterations);
 	
@@ -152,11 +164,8 @@ public:
 	bool IsDiving() const;
 
 	UFUNCTION(BlueprintCallable)
-	void RequestHook();
-
-	UFUNCTION(BlueprintCallable)
-	void ReleaseHook();
-
+	void ToggleHook();
+	
 	UFUNCTION(BlueprintPure)
 	bool IsHooking() const;
 
@@ -172,6 +181,9 @@ public:
 
 	UFUNCTION()
 	void OnRep_JumpExtra();
+
+	UFUNCTION()
+	void OnRep_FindHook();
 
 // CMC Safe Properties
 protected:
@@ -194,6 +206,9 @@ protected:
 	
 	UPROPERTY(Transient, ReplicatedUsing=OnRep_JumpExtra)
 	bool Proxy_JumpExtra = false;
+
+	UPROPERTY(Transient, ReplicatedUsing=OnRep_FindHook)
+	bool Proxy_FindHook = false;
 	
 // Standard Properties
 protected:
@@ -247,15 +262,19 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	float MinHookDistance = 5000.f;
+	
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	float HookPullImpulse = 10.f;
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
-	float MaxHookAngle = 40.f;
+	float ReleaseHookTolerance = 10.f;
 
-	UPROPERTY(Transient)
-	float HookTotalTime = 0.f;
-	
-	UPROPERTY(Transient)
-	float HookCurrentDistance = 0.f;
+	// TODO use this
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	bool bHandleCable = true;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	TObjectPtr<UAnimMontage> GrabHookMontage;
 
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> CurrentHook;

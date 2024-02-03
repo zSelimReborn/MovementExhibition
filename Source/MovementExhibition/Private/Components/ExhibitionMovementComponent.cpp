@@ -3,6 +3,7 @@
 
 #include "Components/ExhibitionMovementComponent.h"
 
+#include "CableComponent.h"
 #include "Characters/ExhibitionCharacter.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
@@ -174,8 +175,19 @@ float UExhibitionMovementComponent::GetMaxSpeed() const
 	{
 		return IsCrouching()? MaxSprintCrouchedSpeed : MaxSprintSpeed;
 	}
-	
-	return Super::GetMaxSpeed();
+
+	if (!IsMovementMode(MOVE_Custom))
+	{
+		return Super::GetMaxSpeed();
+	}
+
+	switch (CustomMovementMode)
+	{
+	case CMOVE_Slide:
+	case CMOVE_Hook:
+	default:
+		return MaxCustomMovementSpeed;
+	}
 }
 
 float UExhibitionMovementComponent::GetMaxBrakingDeceleration() const
@@ -189,7 +201,8 @@ float UExhibitionMovementComponent::GetMaxBrakingDeceleration() const
 	{
 	case CMOVE_Slide:
 		return SlideBrakingDeceleration;
-		break;
+	case CMOVE_Hook:
+		return 0.f;
 	default:
 		return -1.f;
 	}
@@ -240,6 +253,16 @@ void UExhibitionMovementComponent::OnMovementModeChanged(EMovementMode PreviousM
 	{
 		Safe_FlyingDiveCount = 0;
 	}
+
+	if (PreviousMovementMode == MOVE_Custom && PreviousCustomMode == CMOVE_Hook)
+	{
+		FinishHook();
+	}
+
+	if (IsCustomMovementMode(CMOVE_Hook))
+	{
+		EnterHook();
+	}
 }
 
 void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float DeltaSeconds)
@@ -270,22 +293,14 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 	}
 
 	// Try hooking
-	if (Safe_bWantsToHook)
+	if (Safe_bWantsToHook && TryHook())
 	{
-		if (TryHook())
-		{
-			SetMovementMode(MOVE_Custom, CMOVE_Hook);
-			HookTotalTime = 0.f;
-			HookCurrentDistance = FVector::Dist(CharacterOwner->GetActorLocation(), CurrentHook->GetActorLocation());
-		}
+		Proxy_FindHook = !Proxy_FindHook;
+		SetMovementMode(MOVE_Custom, CMOVE_Hook);
 	}
-	else if (IsHooking())
+	else if (Safe_bWantsToHook && IsHooking())
 	{
-		// TODO Add force if jumped
 		SetMovementMode(MOVE_Falling);
-		CurrentHook = nullptr;
-		HookTotalTime = 0.f;
-		HookCurrentDistance = 0.f;
 	}
 
 	// Check if a montage ended
@@ -295,6 +310,7 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 	}
 	
 	Safe_bWantsToDive = false;
+	Safe_bWantsToHook = false;
 	Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
 }
 
@@ -324,6 +340,7 @@ void UExhibitionMovementComponent::UpdateFromCompressedFlags(uint8 Flags)
 
 	Safe_bWantsToSprint = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_0) != 0;
 	Safe_bWantsToDive = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_1) != 0;
+	Safe_bWantsToHook = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_2) != 0;
 }
 
 bool UExhibitionMovementComponent::IsCustomMovementMode(const ECustomMovementMode& InMovementMode) const
@@ -378,13 +395,56 @@ bool UExhibitionMovementComponent::IsAuthProxy() const
 	return CharacterOwner->HasAuthority() && !CharacterOwner->IsLocallyControlled();
 }
 
-float UExhibitionMovementComponent::GetAngleInDegrees(const FVector& First, const FVector& Second) const
+float UExhibitionMovementComponent::GetCapsuleRadius() const
 {
-	const FVector FirstNormalized = First.GetSafeNormal();
-	const FVector SecondNormalized = Second.GetSafeNormal();
+	ensure(CharacterOwner != nullptr && CharacterOwner->GetCapsuleComponent() != nullptr);
+	return CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleRadius();
+}
 
-	const float Dot = FirstNormalized | SecondNormalized;
-	return FMath::RadiansToDegrees(FMath::Acos(Dot));
+float UExhibitionMovementComponent::GetCapsuleHalfHeight() const
+{
+	ensure(CharacterOwner != nullptr && CharacterOwner->GetCapsuleComponent() != nullptr);
+	return CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+}
+
+void UExhibitionMovementComponent::ToggleHookCable() const
+{
+	ensure(CharacterOwner != nullptr);
+
+	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
+	if (HookCable)
+	{
+		HookCable->bAttachEnd = true;
+		HookCable->bAttachStart = true;
+		HookCable->SetHiddenInGame(!HookCable->bHiddenInGame);
+	}
+}
+
+void UExhibitionMovementComponent::UpdateHookCable() const
+{
+	ensure(CharacterOwner != nullptr);
+
+	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
+	if (HookCable && CurrentHook != nullptr)
+	{
+		const float Length = FVector::Dist(HookCable->GetComponentLocation(), CurrentHook->GetActorLocation());
+		HookCable->SetUsingAbsoluteLocation(true);
+		HookCable->SetWorldLocation(CurrentHook->GetActorLocation());
+		HookCable->CableLength = Length;
+	}
+}
+
+void UExhibitionMovementComponent::ResetHookCable() const
+{
+	ensure(CharacterOwner != nullptr);
+
+	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
+	if (HookCable)
+	{
+		ToggleHookCable();
+		HookCable->SetWorldLocation(CharacterOwner->GetActorLocation());
+		HookCable->CableLength = 0.f;
+	}
 }
 
 #pragma region Slide
@@ -610,8 +670,6 @@ bool UExhibitionMovementComponent::TryHook()
 			break;
 		}
 	}
-
-	// TODO transition to fixed height
 	
 	return CurrentHook != nullptr;
 }
@@ -624,10 +682,11 @@ bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook) const
 	}
 
 	const FVector CharacterLocation = CharacterOwner->GetActorLocation();
-	const FRotator ControlRotation = CharacterOwner->GetControlRotation();
-	const FVector ControlLook = ControlRotation.Vector().GetSafeNormal();
+	const FRotator CharacterViewRotation = CharacterOwner->GetActorRotation();
+	
+	const FVector ControlLook = CharacterViewRotation.Vector().GetSafeNormal2D();
 	const FVector HookLocation = Hook->GetActorLocation();
-	const FVector ControlLookToHook = (HookLocation - CharacterLocation).GetSafeNormal();
+	const FVector ControlLookToHook = (HookLocation - CharacterLocation).GetSafeNormal2D();
 
 	DrawDebugLine(
 		GetWorld(),
@@ -650,33 +709,63 @@ bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook) const
 	const float DistToHook = FVector::Dist(CharacterLocation, HookLocation);
 	const bool bNear = FVector::DistSquared(CharacterLocation, HookLocation) <= FMath::Pow(MinHookDistance, 2);
 
-	UE_LOG(LogTemp, Error, TEXT("Dist to hook: %.2f"), DistToHook);
 	if (!bNear)
 	{
 		return false;
 	}
 
 	const bool bInFov = (ControlLook | ControlLookToHook) >= 0.8f;
-	UE_LOG(LogTemp, Error, TEXT("Dot to hook: %.2f"), ControlLook | ControlLookToHook);
 	if (!bInFov)
 	{
 		return false;
 	}
 
+	FCollisionShape Capsule = FCollisionShape::MakeCapsule(GetCapsuleRadius(), GetCapsuleHalfHeight());
 	FHitResult Hit;
 	FCollisionQueryParams IgnoreParams = ExhibitionCharacterRef->GetIgnoreCollisionParams();
 	IgnoreParams.AddIgnoredActor(Hook);
-	const bool bIsBlocked = GetWorld()->LineTraceSingleByProfile(
+	const bool bIsBlocked = GetWorld()->SweepSingleByProfile(
 		Hit,
 		CharacterLocation,
 		HookLocation,
+		FRotator::ZeroRotator.Quaternion(),
 		FName(TEXT("BlockAll")),
+		Capsule,
 		IgnoreParams
 	);
 
-	// TODO Add busy check?
+	if (bIsBlocked)
+	{
+		DrawDebugCapsule(
+			GetWorld(),
+			Hit.Location,
+			Capsule.GetCapsuleHalfHeight(),
+			Capsule.GetCapsuleRadius(),
+			FRotator::ZeroRotator.Quaternion(),
+			FColor::Red,
+			false,
+			5.f
+		);
+	}
 	
 	return !bIsBlocked;
+}
+
+void UExhibitionMovementComponent::EnterHook()
+{
+	bOrientRotationToMovement = false;
+	PlayMontage(GrabHookMontage);
+
+	ToggleHookCable();
+	UpdateHookCable();
+}
+
+void UExhibitionMovementComponent::FinishHook()
+{
+	bOrientRotationToMovement = true;
+	CurrentHook = nullptr;
+
+	ResetHookCable();
 }
 
 void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
@@ -700,10 +789,16 @@ void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
 		return;
 	}
 
+	if (UpdatedComponent->GetComponentLocation().Equals(CurrentHook->GetActorLocation(), ReleaseHookTolerance))
+	{
+		SetMovementMode(MOVE_Falling);
+		StartNewPhysics(deltaTime, Iterations);
+		return;
+	}
+
 	bJustTeleported = false;
 	float remainingTime = deltaTime;
 
-	const float DistanceToHook = HookCurrentDistance - 50.f;
 	// Sub-stepping
 	while ((remainingTime >= MIN_TICK_TIME) && (Iterations < MaxSimulationIterations) && CharacterOwner && (CharacterOwner->Controller || bRunPhysicsWithNoController || HasAnimRootMotion() || CurrentRootMotion.HasOverrideVelocity() || (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy)))
 	{
@@ -716,27 +811,14 @@ void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
 		const FVector OldLocation = UpdatedComponent->GetComponentLocation();
 		const FVector OldVelocity = Velocity;
 
-		const FVector HookToCharacter = UpdatedComponent->GetComponentLocation() - CurrentHook->GetActorLocation();
-		float Angle = GetAngleInDegrees(HookToCharacter, -CurrentHook->GetActorUpVector());
-		const float Cross = (HookToCharacter ^ -CurrentHook->GetActorUpVector()).Z;
+		const FVector Direction = CurrentHook->GetActorLocation() - UpdatedComponent->GetComponentLocation();
+		const FRotator NewRotation = Direction.Rotation();
+		const FQuat NewCharacterRotation = FRotator{0.f, NewRotation.Yaw, 0.f}.Quaternion();
 		
-		Angle = FMath::Clamp(Angle, -MaxHookAngle, MaxHookAngle);
-		Angle = (Cross > 0)? Angle : -Angle;
-		UE_LOG(LogTemp, Error, TEXT("Angle Deg: %.2f | CrossZ: %.2f"), Angle, Cross);
+		Velocity = Direction * HookPullImpulse * timeTick;
+		Acceleration = FVector::ZeroVector;
+		CalcVelocity(timeTick, FallingLateralFriction, false, GetMaxBrakingDeceleration());
 		
-		HookTotalTime += timeTick;
-		const FVector Delta1 = FVector(
-			DistanceToHook * sin(MaxHookAngle * sin(HookTotalTime) / 30),
-			0.0f,
-			-cos(MaxHookAngle * sin(HookTotalTime) / 30) * DistanceToHook
-		);
-		const FVector NextPosition = CurrentHook->GetActorLocation() + Delta1;
-		const FVector DeltaVelocity = NextPosition - UpdatedComponent->GetComponentLocation();
-
-		Velocity = DeltaVelocity * 10.f * timeTick;
-		// Apply acceleration
-		CalcVelocity(timeTick, 0.f, false, 0.f);
-
 		// Move params
 		const FVector MoveVelocity = Velocity;
 		const FVector Delta = timeTick * MoveVelocity;
@@ -749,7 +831,8 @@ void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
 		else
 		{
 			FHitResult MoveHit;
-			SafeMoveUpdatedComponent(Delta, UpdatedComponent->GetComponentQuat(), true, MoveHit);
+			SafeMoveUpdatedComponent(Delta, NewCharacterRotation, true, MoveHit);
+			UpdateHookCable();
 			// Make velocity reflect actual move
 			if( !bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && timeTick >= MIN_TICK_TIME)
 			{
@@ -760,6 +843,21 @@ void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
 		if (UpdatedComponent->GetComponentLocation() == OldLocation)
 		{
 			remainingTime = 0.f;
+			break;
+		}
+
+		if (UpdatedComponent->GetComponentLocation().Equals(CurrentHook->GetActorLocation(), ReleaseHookTolerance))
+		{
+			SetMovementMode(MOVE_Falling);
+			StartNewPhysics(remainingTime, Iterations);
+			break;
+		}
+
+		// Fallback check to leave hooking
+		if (CurrentHook->IsOverlappingActor(CharacterOwner))
+		{
+			SetMovementMode(MOVE_Falling);
+			StartNewPhysics(remainingTime, Iterations);
 			break;
 		}
 	}
@@ -803,14 +901,9 @@ bool UExhibitionMovementComponent::IsDiving() const
 	return CharacterOwner->GetCurrentMontage() == DiveMontage;
 }
 
-void UExhibitionMovementComponent::RequestHook()
+void UExhibitionMovementComponent::ToggleHook()
 {
-	Safe_bWantsToHook = true;
-}
-
-void UExhibitionMovementComponent::ReleaseHook()
-{
-	Safe_bWantsToHook = false;
+	Safe_bWantsToHook = !Safe_bWantsToHook;
 }
 
 bool UExhibitionMovementComponent::IsHooking() const
@@ -824,6 +917,7 @@ void UExhibitionMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimePr
 
 	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_Dive, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_JumpExtra, COND_SkipOwner);
+	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_FindHook, COND_SkipOwner);
 }
 
 void UExhibitionMovementComponent::OnRep_Dive()
@@ -848,4 +942,9 @@ void UExhibitionMovementComponent::OnRep_Dive()
 void UExhibitionMovementComponent::OnRep_JumpExtra()
 {
 	CharacterOwner->PlayAnimMontage(JumpExtraMontage);
+}
+
+void UExhibitionMovementComponent::OnRep_FindHook()
+{
+	TryHook();
 }
