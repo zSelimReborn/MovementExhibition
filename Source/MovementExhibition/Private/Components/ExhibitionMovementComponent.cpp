@@ -183,8 +183,9 @@ float UExhibitionMovementComponent::GetMaxSpeed() const
 
 	switch (CustomMovementMode)
 	{
-	case CMOVE_Slide:
 	case CMOVE_Hook:
+		return MaxHookSpeed;
+	case CMOVE_Slide:
 	default:
 		return MaxCustomMovementSpeed;
 	}
@@ -428,8 +429,10 @@ void UExhibitionMovementComponent::UpdateHookCable() const
 	if (HookCable && CurrentHook != nullptr)
 	{
 		const float Length = FVector::Dist(HookCable->GetComponentLocation(), CurrentHook->GetActorLocation());
-		HookCable->SetUsingAbsoluteLocation(true);
-		HookCable->SetWorldLocation(CurrentHook->GetActorLocation());
+		//HookCable->SetUsingAbsoluteLocation(true);
+		//HookCable->SetWorldLocation(CurrentHook->GetActorLocation());
+		HookCable->SetAttachEndTo(CurrentHook, NAME_None);
+		//HookCable->EndLocation = CurrentHook->GetActorLocation();
 		HookCable->CableLength = Length;
 	}
 }
@@ -442,7 +445,9 @@ void UExhibitionMovementComponent::ResetHookCable() const
 	if (HookCable)
 	{
 		ToggleHookCable();
-		HookCable->SetWorldLocation(CharacterOwner->GetActorLocation());
+		//HookCable->SetWorldLocation(CharacterOwner->GetActorLocation());
+		HookCable->SetAttachEndTo(nullptr, NAME_None);
+		//HookCable->EndLocation = UpdatedComponent->GetComponentLocation();
 		HookCable->CableLength = 0.f;
 	}
 }
@@ -662,15 +667,24 @@ bool UExhibitionMovementComponent::TryHook()
 		return false;
 	}
 
+	AActor* SelectedHook = nullptr;
+	float SelectedHookDistanceSrd = FMath::Pow(MinHookDistance, 2);
 	for (AActor* Hook : AllHooks)
 	{
-		if (CanUseHook(Hook))
+		const float HookDistance = FVector::DistSquared(UpdatedComponent->GetComponentLocation(), Hook->GetActorLocation());
+		if (HookDistance <= FMath::Pow(IgnoreHookDistance, 2))
 		{
-			CurrentHook = Hook;
-			break;
+			continue;
+		}
+		
+		if (CanUseHook(Hook) && HookDistance <= SelectedHookDistanceSrd)
+		{
+			SelectedHook = Hook;
+			SelectedHookDistanceSrd = HookDistance;
 		}
 	}
-	
+
+	CurrentHook = SelectedHook;
 	return CurrentHook != nullptr;
 }
 
@@ -681,8 +695,8 @@ bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook) const
 		return false;
 	}
 
-	const FVector CharacterLocation = CharacterOwner->GetActorLocation();
-	const FRotator CharacterViewRotation = CharacterOwner->GetActorRotation();
+	const FVector CharacterLocation = UpdatedComponent->GetComponentLocation();
+	const FRotator CharacterViewRotation = UpdatedComponent->GetComponentRotation();
 	
 	const FVector ControlLook = CharacterViewRotation.Vector().GetSafeNormal2D();
 	const FVector HookLocation = Hook->GetActorLocation();
@@ -706,7 +720,6 @@ bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook) const
 		5.f
 	);
 
-	const float DistToHook = FVector::Dist(CharacterLocation, HookLocation);
 	const bool bNear = FVector::DistSquared(CharacterLocation, HookLocation) <= FMath::Pow(MinHookDistance, 2);
 
 	if (!bNear)
@@ -756,16 +769,26 @@ void UExhibitionMovementComponent::EnterHook()
 	bOrientRotationToMovement = false;
 	PlayMontage(GrabHookMontage);
 
-	ToggleHookCable();
-	UpdateHookCable();
+	if (bHandleCable)
+	{
+		ToggleHookCable();
+		UpdateHookCable();
+	}
 }
 
 void UExhibitionMovementComponent::FinishHook()
 {
 	bOrientRotationToMovement = true;
 	CurrentHook = nullptr;
+	
 
-	ResetHookCable();
+	// Force stop
+	Velocity -= Velocity / 1.4f;
+	
+	if (bHandleCable)
+	{
+		ResetHookCable();
+	}
 }
 
 void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
@@ -811,13 +834,14 @@ void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
 		const FVector OldLocation = UpdatedComponent->GetComponentLocation();
 		const FVector OldVelocity = Velocity;
 
-		const FVector Direction = CurrentHook->GetActorLocation() - UpdatedComponent->GetComponentLocation();
+		const FVector Direction = (CurrentHook->GetActorLocation() - UpdatedComponent->GetComponentLocation()).GetSafeNormal();
 		const FRotator NewRotation = Direction.Rotation();
 		const FQuat NewCharacterRotation = FRotator{0.f, NewRotation.Yaw, 0.f}.Quaternion();
-		
-		Velocity = Direction * HookPullImpulse * timeTick;
-		Acceleration = FVector::ZeroVector;
-		CalcVelocity(timeTick, FallingLateralFriction, false, GetMaxBrakingDeceleration());
+
+		const float Impulse = (HookPullImpulse <= MaxHookSpeed)? HookPullImpulse : MaxHookSpeed;
+		Velocity = Direction * Impulse;
+
+		UE_LOG(LogTemp, Error, TEXT("Velocity: %.2f"), Velocity.Size());
 		
 		// Move params
 		const FVector MoveVelocity = Velocity;
@@ -832,7 +856,11 @@ void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
 		{
 			FHitResult MoveHit;
 			SafeMoveUpdatedComponent(Delta, NewCharacterRotation, true, MoveHit);
-			UpdateHookCable();
+			if (bHandleCable)
+			{
+				UpdateHookCable();
+			}
+			
 			// Make velocity reflect actual move
 			if( !bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && timeTick >= MIN_TICK_TIME)
 			{

@@ -262,14 +262,19 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	float MinHookDistance = 5000.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	float IgnoreHookDistance = 100.f;
 	
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	float HookPullImpulse = 10.f;
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	float ReleaseHookTolerance = 10.f;
+	
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	float MaxHookSpeed = 600.f;
 
-	// TODO use this
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	bool bHandleCable = true;
 
