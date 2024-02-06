@@ -257,7 +257,7 @@ void UExhibitionMovementComponent::OnMovementModeChanged(EMovementMode PreviousM
 
 	if (PreviousMovementMode == MOVE_Custom && PreviousCustomMode == CMOVE_Hook)
 	{
-		FinishHook();
+		//FinishHook();
 	}
 
 	if (IsCustomMovementMode(CMOVE_Hook))
@@ -313,6 +313,22 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 	Safe_bWantsToDive = false;
 	Safe_bWantsToHook = false;
 	Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
+}
+
+void UExhibitionMovementComponent::UpdateCharacterStateAfterMovement(float DeltaSeconds)
+{
+	Super::UpdateCharacterStateAfterMovement(DeltaSeconds);
+
+	if (GetRootMotionSourceByID(CurrentTransitionId) && GetRootMotionSourceByID(CurrentTransitionId)->Status.HasFlag(ERootMotionSourceStatusFlags::Finished))
+	{
+		RemoveRootMotionSourceByID(CurrentTransitionId);
+		UE_LOG(LogTemp, Error, TEXT("Transition %d Finished!"), CurrentTransitionId);
+	}
+
+	if (GetRootMotionSourceByID(CurrentTransitionId))
+	{
+		UE_LOG(LogTemp, Error, TEXT("Root Motion Transform: %.2f"), GetRootMotionSourceByID(CurrentTransitionId)->GetTime());
+	}
 }
 
 bool UExhibitionMovementComponent::DoJump(bool bReplayingMoves)
@@ -668,7 +684,7 @@ bool UExhibitionMovementComponent::TryHook()
 	}
 
 	AActor* SelectedHook = nullptr;
-	float SelectedHookDistanceSrd = FMath::Pow(MinHookDistance, 2);
+	float SelectedHookDistanceSrd = FMath::Pow(MaxHookDistance, 2);
 	for (AActor* Hook : AllHooks)
 	{
 		const float HookDistance = FVector::DistSquared(UpdatedComponent->GetComponentLocation(), Hook->GetActorLocation());
@@ -720,7 +736,7 @@ bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook) const
 		5.f
 	);
 
-	const bool bNear = FVector::DistSquared(CharacterLocation, HookLocation) <= FMath::Pow(MinHookDistance, 2);
+	const bool bNear = FVector::DistSquared(CharacterLocation, HookLocation) <= FMath::Pow(MaxHookDistance, 2);
 
 	if (!bNear)
 	{
@@ -769,6 +785,8 @@ void UExhibitionMovementComponent::EnterHook()
 	bOrientRotationToMovement = false;
 	PlayMontage(GrabHookMontage);
 
+	PrepareHook();
+	
 	if (bHandleCable)
 	{
 		ToggleHookCable();
@@ -789,6 +807,58 @@ void UExhibitionMovementComponent::FinishHook()
 	{
 		ResetHookCable();
 	}
+}
+
+void UExhibitionMovementComponent::PrepareHook()
+{
+	if (CurrentHook == nullptr)
+	{
+		return;
+	}
+
+	if (HookCurve == nullptr)
+	{
+		return;
+	}
+	
+	const float DistanceSqr = FVector::DistSquared(UpdatedComponent->GetComponentLocation(), CurrentHook->GetActorLocation());
+	const float MaxDistanceSqr = FMath::Square(MaxHookDistance);
+	const float HookActualDuration = FMath::GetMappedRangeValueClamped(
+		FVector2D(0.f, MaxDistanceSqr),
+		FVector2D(0.f, MaxHookDuration),
+		DistanceSqr
+	);
+
+	
+	MoveToTransition.Reset();
+	MoveToTransition = MakeShared<FRootMotionSource_RadialForce>();
+	MoveToTransition->AccumulateMode = ERootMotionAccumulateMode::Override;
+	MoveToTransition->Priority = 6;
+	MoveToTransition->InstanceName = FName(TEXT("Hook Move"));
+	MoveToTransition->Duration = HookActualDuration;
+	MoveToTransition->Radius = ReleaseHookTolerance;
+	MoveToTransition->bIsPush = bHandleCable;
+	//MoveToTransition->StrengthOverTime = HookCurve;
+	MoveToTransition->Strength = HookPullImpulse;
+	MoveToTransition->LocationActor = CurrentHook;
+	MoveToTransition->Location = CurrentHook->GetActorLocation();
+	MoveToTransition->bUseFixedWorldDirection = false;
+
+	MoveToTransition.Reset();
+	TSharedPtr<FRootMotionSource_MoveToForce> MoveTo = MakeShared<FRootMotionSource_MoveToForce>();
+	MoveTo->AccumulateMode = ERootMotionAccumulateMode::Override;
+	MoveTo->Priority = 6;
+	MoveTo->InstanceName = FName(TEXT("Hook Move"));
+	MoveTo->Duration = HookActualDuration;
+	//MoveToTransition->StrengthOverTime = HookCurve;
+	MoveTo->StartLocation = UpdatedComponent->GetComponentLocation();
+	MoveTo->TargetLocation = CurrentHook->GetActorLocation();
+
+	Velocity = FVector::ZeroVector;
+	SetMovementMode(MOVE_Flying);
+	CurrentTransitionId = ApplyRootMotionSource(MoveTo);
+
+	//UE_LOG(LogTemp, Error, TEXT("Actor: %s | Loc: %s | Strenght: %.2f"), *MoveToTransition->LocationActor->GetActorLabel(), *MoveToTransition->Location.ToString(), MoveToTransition->Strength);
 }
 
 void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
@@ -819,6 +889,54 @@ void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
 		return;
 	}
 
+	RestorePreAdditiveRootMotionVelocity();
+
+	if( !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() )
+	{
+		if( bCheatFlying && Acceleration.IsZero() )
+		{
+			Velocity = FVector::ZeroVector;
+		}
+		CalcVelocity(deltaTime, FallingLateralFriction, true, GetMaxBrakingDeceleration());
+	}
+
+	ApplyRootMotionToVelocity(deltaTime);
+
+	Iterations++;
+	bJustTeleported = false;
+
+	FVector OldLocation = UpdatedComponent->GetComponentLocation();
+	const FVector Adjusted = Velocity * deltaTime;
+	FHitResult Hit(1.f);
+	SafeMoveUpdatedComponent(Adjusted, UpdatedComponent->GetComponentQuat(), true, Hit);
+
+	// Make velocity reflect actual move
+	if( !bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && deltaTime >= MIN_TICK_TIME)
+	{
+		Velocity = (UpdatedComponent->GetComponentLocation() - OldLocation) / deltaTime;
+	}
+
+	if (UpdatedComponent->GetComponentLocation() == OldLocation)
+	{
+		return;
+	}
+
+	if (UpdatedComponent->GetComponentLocation().Equals(CurrentHook->GetActorLocation(), ReleaseHookTolerance))
+	{
+		SetMovementMode(MOVE_Falling);
+		StartNewPhysics(deltaTime, Iterations);
+		return;
+	}
+
+	// Fallback check to leave hooking
+	if (CurrentHook->IsOverlappingActor(CharacterOwner))
+	{
+		SetMovementMode(MOVE_Falling);
+		StartNewPhysics(deltaTime, Iterations);
+		return;
+	}
+
+	/* 
 	bJustTeleported = false;
 	float remainingTime = deltaTime;
 
@@ -840,8 +958,6 @@ void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
 
 		const float Impulse = (HookPullImpulse <= MaxHookSpeed)? HookPullImpulse : MaxHookSpeed;
 		Velocity = Direction * Impulse;
-
-		UE_LOG(LogTemp, Error, TEXT("Velocity: %.2f"), Velocity.Size());
 		
 		// Move params
 		const FVector MoveVelocity = Velocity;
@@ -888,7 +1004,7 @@ void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
 			StartNewPhysics(remainingTime, Iterations);
 			break;
 		}
-	}
+	} */
 }
 
 #pragma endregion

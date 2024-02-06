@@ -85,6 +85,8 @@ public:
 
 	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
 
+	virtual void UpdateCharacterStateAfterMovement(float DeltaSeconds) override;
+
 	virtual bool DoJump(bool bReplayingMoves) override;
 
 protected:
@@ -137,6 +139,8 @@ protected:
 	void EnterHook();
 
 	void FinishHook();
+
+	void PrepareHook();
 
 	void PhysHook(float deltaTime, int32 Iterations);
 	
@@ -261,7 +265,7 @@ protected:
 	FName TagHookName = NAME_None;
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
-	float MinHookDistance = 5000.f;
+	float MaxHookDistance = 5000.f;
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	float IgnoreHookDistance = 100.f;
@@ -279,8 +283,19 @@ protected:
 	bool bHandleCable = true;
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
-	TObjectPtr<UAnimMontage> GrabHookMontage;
+	float MaxHookDuration = 2.f;
 
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	TObjectPtr<UCurveFloat> HookCurve;
+	
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	TObjectPtr<UAnimMontage> GrabHookMontage;
+	
+	UPROPERTY(Transient)
+	uint16 CurrentTransitionId;
+
+	TSharedPtr<FRootMotionSource_RadialForce> MoveToTransition;
+	
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> CurrentHook;
 
