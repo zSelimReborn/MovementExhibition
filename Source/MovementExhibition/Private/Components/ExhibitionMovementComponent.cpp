@@ -229,7 +229,8 @@ void UExhibitionMovementComponent::PhysCustom(float deltaTime, int32 Iterations)
 		PhysSlide(deltaTime, Iterations);
 		break;
 	case CMOVE_Hook:
-		PhysHook(deltaTime, Iterations);
+		PhysTravel(deltaTime, Iterations);
+		UpdateHookCable();
 		break;
 	default:
 		UE_LOG(LogTemp, Fatal, TEXT("PhysCustom Invalid Custom Movement Mode: %d"), CustomMovementMode);
@@ -257,7 +258,7 @@ void UExhibitionMovementComponent::OnMovementModeChanged(EMovementMode PreviousM
 
 	if (PreviousMovementMode == MOVE_Custom && PreviousCustomMode == CMOVE_Hook)
 	{
-		//FinishHook();
+		FinishHook();
 	}
 
 	if (IsCustomMovementMode(CMOVE_Hook))
@@ -322,12 +323,6 @@ void UExhibitionMovementComponent::UpdateCharacterStateAfterMovement(float Delta
 	if (GetRootMotionSourceByID(CurrentTransitionId) && GetRootMotionSourceByID(CurrentTransitionId)->Status.HasFlag(ERootMotionSourceStatusFlags::Finished))
 	{
 		RemoveRootMotionSourceByID(CurrentTransitionId);
-		UE_LOG(LogTemp, Error, TEXT("Transition %d Finished!"), CurrentTransitionId);
-	}
-
-	if (GetRootMotionSourceByID(CurrentTransitionId))
-	{
-		UE_LOG(LogTemp, Error, TEXT("Root Motion Transform: %.2f"), GetRootMotionSourceByID(CurrentTransitionId)->GetTime());
 	}
 }
 
@@ -442,13 +437,10 @@ void UExhibitionMovementComponent::UpdateHookCable() const
 	ensure(CharacterOwner != nullptr);
 
 	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
-	if (HookCable && CurrentHook != nullptr)
+	if (HookCable && TravelDestinationLocation != FVector::ZeroVector)
 	{
-		const float Length = FVector::Dist(HookCable->GetComponentLocation(), CurrentHook->GetActorLocation());
-		//HookCable->SetUsingAbsoluteLocation(true);
-		//HookCable->SetWorldLocation(CurrentHook->GetActorLocation());
+		const float Length = FVector::Dist(HookCable->GetComponentLocation(), TravelDestinationLocation);
 		HookCable->SetAttachEndTo(CurrentHook, NAME_None);
-		//HookCable->EndLocation = CurrentHook->GetActorLocation();
 		HookCable->CableLength = Length;
 	}
 }
@@ -461,9 +453,8 @@ void UExhibitionMovementComponent::ResetHookCable() const
 	if (HookCable)
 	{
 		ToggleHookCable();
-		//HookCable->SetWorldLocation(CharacterOwner->GetActorLocation());
 		HookCable->SetAttachEndTo(nullptr, NAME_None);
-		//HookCable->EndLocation = UpdatedComponent->GetComponentLocation();
+		HookCable->SetUsingAbsoluteLocation(false);
 		HookCable->CableLength = 0.f;
 	}
 }
@@ -701,7 +692,8 @@ bool UExhibitionMovementComponent::TryHook()
 	}
 
 	CurrentHook = SelectedHook;
-	return CurrentHook != nullptr;
+	TravelDestinationLocation = (SelectedHook != nullptr)? SelectedHook->GetActorLocation() : FVector::ZeroVector;
+	return SelectedHook != nullptr;
 }
 
 bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook) const
@@ -785,7 +777,7 @@ void UExhibitionMovementComponent::EnterHook()
 	bOrientRotationToMovement = false;
 	PlayMontage(GrabHookMontage);
 
-	PrepareHook();
+	PrepareTravel(TEXT("Hook Travel"), MaxHookDistance, MaxHookSpeed, HookCurve);
 	
 	if (bHandleCable)
 	{
@@ -797,8 +789,9 @@ void UExhibitionMovementComponent::EnterHook()
 void UExhibitionMovementComponent::FinishHook()
 {
 	bOrientRotationToMovement = true;
+	TravelDestinationLocation = FVector::ZeroVector;
 	CurrentHook = nullptr;
-	
+	RemoveRootMotionSource(TEXT("Hook Travel"));
 
 	// Force stop
 	Velocity -= Velocity / 1.4f;
@@ -809,66 +802,36 @@ void UExhibitionMovementComponent::FinishHook()
 	}
 }
 
-void UExhibitionMovementComponent::PrepareHook()
+void UExhibitionMovementComponent::PrepareTravel(const FString& TravelName, const float MaxDistance, const float MaxSpeed, UCurveFloat* Curve)
 {
-	if (CurrentHook == nullptr)
-	{
-		return;
-	}
-
 	if (HookCurve == nullptr)
 	{
 		return;
 	}
-	
-	const float DistanceSqr = FVector::DistSquared(UpdatedComponent->GetComponentLocation(), CurrentHook->GetActorLocation());
-	const float MaxDistanceSqr = FMath::Square(MaxHookDistance);
-	const float HookActualDuration = FMath::GetMappedRangeValueClamped(
-		FVector2D(0.f, MaxDistanceSqr),
-		FVector2D(0.f, MaxHookDuration),
-		DistanceSqr
-	);
 
-	
-	MoveToTransition.Reset();
-	MoveToTransition = MakeShared<FRootMotionSource_RadialForce>();
+	const TSharedPtr<FRootMotionSource_RadialForce> MoveToTransition = MakeShared<FRootMotionSource_RadialForce>();
 	MoveToTransition->AccumulateMode = ERootMotionAccumulateMode::Override;
 	MoveToTransition->Priority = 6;
-	MoveToTransition->InstanceName = FName(TEXT("Hook Move"));
-	MoveToTransition->Duration = HookActualDuration;
-	MoveToTransition->Radius = ReleaseHookTolerance;
-	MoveToTransition->bIsPush = bHandleCable;
-	//MoveToTransition->StrengthOverTime = HookCurve;
-	MoveToTransition->Strength = HookPullImpulse;
-	MoveToTransition->LocationActor = CurrentHook;
-	MoveToTransition->Location = CurrentHook->GetActorLocation();
+	MoveToTransition->InstanceName = FName(TravelName);
+	MoveToTransition->Radius = MaxDistance;
+	MoveToTransition->bIsPush = false;
+	MoveToTransition->StrengthOverTime = Curve;
+	MoveToTransition->Strength = MaxSpeed;
+	MoveToTransition->Location = TravelDestinationLocation;
 	MoveToTransition->bUseFixedWorldDirection = false;
 
-	MoveToTransition.Reset();
-	TSharedPtr<FRootMotionSource_MoveToForce> MoveTo = MakeShared<FRootMotionSource_MoveToForce>();
-	MoveTo->AccumulateMode = ERootMotionAccumulateMode::Override;
-	MoveTo->Priority = 6;
-	MoveTo->InstanceName = FName(TEXT("Hook Move"));
-	MoveTo->Duration = HookActualDuration;
-	//MoveToTransition->StrengthOverTime = HookCurve;
-	MoveTo->StartLocation = UpdatedComponent->GetComponentLocation();
-	MoveTo->TargetLocation = CurrentHook->GetActorLocation();
-
 	Velocity = FVector::ZeroVector;
-	SetMovementMode(MOVE_Flying);
-	CurrentTransitionId = ApplyRootMotionSource(MoveTo);
-
-	//UE_LOG(LogTemp, Error, TEXT("Actor: %s | Loc: %s | Strenght: %.2f"), *MoveToTransition->LocationActor->GetActorLabel(), *MoveToTransition->Location.ToString(), MoveToTransition->Strength);
+	CurrentTransitionId = ApplyRootMotionSource(MoveToTransition);
 }
 
-void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
+void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 {
 	if (deltaTime < MIN_TICK_TIME)
 	{
 		return;
 	}
 
-	if (CurrentHook == nullptr)
+	if (TravelDestinationLocation == FVector::ZeroVector)
 	{
 		SetMovementMode(MOVE_Falling);
 		StartNewPhysics(deltaTime, Iterations);
@@ -882,7 +845,7 @@ void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
 		return;
 	}
 
-	if (UpdatedComponent->GetComponentLocation().Equals(CurrentHook->GetActorLocation(), ReleaseHookTolerance))
+	if (UpdatedComponent->GetComponentLocation().Equals(TravelDestinationLocation, ReleaseHookTolerance))
 	{
 		SetMovementMode(MOVE_Falling);
 		StartNewPhysics(deltaTime, Iterations);
@@ -921,21 +884,13 @@ void UExhibitionMovementComponent::PhysHook(float deltaTime, int32 Iterations)
 		return;
 	}
 
-	if (UpdatedComponent->GetComponentLocation().Equals(CurrentHook->GetActorLocation(), ReleaseHookTolerance))
+	if (UpdatedComponent->GetComponentLocation().Equals(TravelDestinationLocation, ReleaseHookTolerance))
 	{
 		SetMovementMode(MOVE_Falling);
 		StartNewPhysics(deltaTime, Iterations);
 		return;
 	}
-
-	// Fallback check to leave hooking
-	if (CurrentHook->IsOverlappingActor(CharacterOwner))
-	{
-		SetMovementMode(MOVE_Falling);
-		StartNewPhysics(deltaTime, Iterations);
-		return;
-	}
-
+	
 	/* 
 	bJustTeleported = false;
 	float remainingTime = deltaTime;

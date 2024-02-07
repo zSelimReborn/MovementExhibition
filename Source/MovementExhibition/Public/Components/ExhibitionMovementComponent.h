@@ -139,10 +139,11 @@ protected:
 	void EnterHook();
 
 	void FinishHook();
+	
+	// Travel to destination
+	void PhysTravel(float deltaTime, int32 Iterations);
 
-	void PrepareHook();
-
-	void PhysHook(float deltaTime, int32 Iterations);
+	void PrepareTravel(const FString& TravelName, const float MaxDistance, const float MaxSpeed, UCurveFloat* Curve);
 	
 // Interface
 public:
@@ -271,20 +272,14 @@ protected:
 	float IgnoreHookDistance = 100.f;
 	
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
-	float HookPullImpulse = 10.f;
-
-	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
-	float ReleaseHookTolerance = 10.f;
+	float MaxHookSpeed = 600.f;
 	
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
-	float MaxHookSpeed = 600.f;
+	float ReleaseHookTolerance = 10.f;
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	bool bHandleCable = true;
-
-	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
-	float MaxHookDuration = 2.f;
-
+	
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	TObjectPtr<UCurveFloat> HookCurve;
 	
@@ -294,10 +289,11 @@ protected:
 	UPROPERTY(Transient)
 	uint16 CurrentTransitionId;
 
-	TSharedPtr<FRootMotionSource_RadialForce> MoveToTransition;
-	
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> CurrentHook;
+	
+	UPROPERTY(Transient)
+	FVector TravelDestinationLocation = FVector::ZeroVector;
 
 	// TODO Probably not the ideal solution
 	UPROPERTY(Transient)
