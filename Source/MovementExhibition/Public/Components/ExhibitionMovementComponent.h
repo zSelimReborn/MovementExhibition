@@ -21,6 +21,8 @@ enum ECustomMovementMode
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEnterSlideDelegate);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExitSlideDelegate);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDiveDelegate);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEnterHookDelegate);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExitHookDelegate);
 
 /**
  * 
@@ -143,7 +145,7 @@ protected:
 	// Travel to destination
 	void PhysTravel(float deltaTime, int32 Iterations);
 
-	void PrepareTravel(const FString& TravelName, const float MaxDistance, const float MaxSpeed, UCurveFloat* Curve);
+	uint16 PrepareTravel(const FString& TravelName, const float MaxDistance, const float MaxSpeed, UCurveFloat* Curve);
 	
 // Interface
 public:
@@ -167,10 +169,7 @@ public:
 
 	UFUNCTION(BlueprintCallable)
 	bool IsDiving() const;
-
-	UFUNCTION(BlueprintCallable)
-	void ToggleHook();
-
+	
 	UFUNCTION(BlueprintCallable)
 	void RequestHook();
 
@@ -283,18 +282,15 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	float ReleaseHookTolerance = 10.f;
 
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook", meta=(ClampMin=0.f, ClampMax=1.f))
+	float HookBrakingFactor = 0.9f;
+	
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	bool bHandleCable = true;
 	
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	TObjectPtr<UCurveFloat> HookCurve;
 	
-	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
-	TObjectPtr<UAnimMontage> GrabHookMontage;
-	
-	UPROPERTY(Transient)
-	uint16 CurrentTransitionId;
-
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> CurrentHook;
 	
@@ -321,4 +317,14 @@ protected:
 
 	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
 	FOnDiveDelegate OnDive;
+
+	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
+	FOnEnterHookDelegate OnEnterHook;
+
+	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
+	FOnExitHookDelegate OnExitHook;
+
+// Constants
+public:
+	static const FString HOOK_TRANSITION_NAME;
 };
