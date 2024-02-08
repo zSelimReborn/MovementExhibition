@@ -170,6 +170,12 @@ public:
 
 	UFUNCTION(BlueprintCallable)
 	void ToggleHook();
+
+	UFUNCTION(BlueprintCallable)
+	void RequestHook();
+
+	UFUNCTION(BlueprintCallable)
+	void ReleaseHook();
 	
 	UFUNCTION(BlueprintPure)
 	bool IsHooking() const;

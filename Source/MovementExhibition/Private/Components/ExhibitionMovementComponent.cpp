@@ -295,14 +295,18 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 	}
 
 	// Try hooking
-	if (Safe_bWantsToHook && TryHook())
+	// Sim.Proxies get replicated hook state
+	if (CharacterOwner->GetLocalRole() != ROLE_SimulatedProxy)
 	{
-		Proxy_FindHook = !Proxy_FindHook;
-		SetMovementMode(MOVE_Custom, CMOVE_Hook);
-	}
-	else if (Safe_bWantsToHook && IsHooking())
-	{
-		SetMovementMode(MOVE_Falling);
+		if (Safe_bWantsToHook && TryHook())
+		{
+			Proxy_FindHook = !Proxy_FindHook;
+			SetMovementMode(MOVE_Custom, CMOVE_Hook);
+		}
+		else if (!Safe_bWantsToHook && IsHooking())
+		{
+			SetMovementMode(MOVE_Falling);
+		}
 	}
 
 	// Check if a montage ended
@@ -312,7 +316,7 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 	}
 	
 	Safe_bWantsToDive = false;
-	Safe_bWantsToHook = false;
+	//Safe_bWantsToHook = false;
 	Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
 }
 
@@ -788,10 +792,12 @@ void UExhibitionMovementComponent::EnterHook()
 
 void UExhibitionMovementComponent::FinishHook()
 {
+	Safe_bWantsToHook = false;
 	bOrientRotationToMovement = true;
 	TravelDestinationLocation = FVector::ZeroVector;
 	CurrentHook = nullptr;
 	RemoveRootMotionSource(TEXT("Hook Travel"));
+	CharacterOwner->StopAnimMontage(GrabHookMontage);
 
 	// Force stop
 	Velocity -= Velocity / 1.4f;
@@ -1003,6 +1009,16 @@ bool UExhibitionMovementComponent::IsDiving() const
 void UExhibitionMovementComponent::ToggleHook()
 {
 	Safe_bWantsToHook = !Safe_bWantsToHook;
+}
+
+void UExhibitionMovementComponent::RequestHook()
+{
+	Safe_bWantsToHook = true;
+}
+
+void UExhibitionMovementComponent::ReleaseHook()
+{
+	Safe_bWantsToHook = false;
 }
 
 bool UExhibitionMovementComponent::IsHooking() const

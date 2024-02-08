@@ -38,7 +38,8 @@ void AExhibitionPlayerController::SetupInputComponent()
 
 		EnhancedInputComponent->BindAction(RollAction, ETriggerEvent::Triggered, this, &AExhibitionPlayerController::RequestRoll);
 
-		EnhancedInputComponent->BindAction(HookAction, ETriggerEvent::Triggered, this, &AExhibitionPlayerController::RequestHook);
+		EnhancedInputComponent->BindAction(HookAction, ETriggerEvent::Started, this, &AExhibitionPlayerController::RequestHook);
+		EnhancedInputComponent->BindAction(HookAction, ETriggerEvent::Completed, this, &AExhibitionPlayerController::ReleaseHook);
 
 		InitializeMappingContext();
 	}
@@ -119,5 +120,13 @@ void AExhibitionPlayerController::RequestHook()
 	ensure(CharacterRef != nullptr);
 	ensure(CharacterRef->GetExhibitionMovComponent());
 
-	CharacterRef->GetExhibitionMovComponent()->ToggleHook();
+	CharacterRef->GetExhibitionMovComponent()->RequestHook();
+}
+
+void AExhibitionPlayerController::ReleaseHook()
+{
+	ensure(CharacterRef != nullptr);
+	ensure(CharacterRef->GetExhibitionMovComponent());
+
+	CharacterRef->GetExhibitionMovComponent()->ReleaseHook();
 }
