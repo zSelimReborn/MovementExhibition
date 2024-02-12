@@ -14,12 +14,15 @@ enum ECustomMovementMode
 {
 	CMOVE_None			UMETA(Hidden),
 	CMOVE_Slide			UMETA(DisplayName = "Slide"),
+	CMOVE_Hook			UMETA(DisplayName = "Hook"),
 	CMOVE_MAX			UMETA(Hidden),
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEnterSlideDelegate);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExitSlideDelegate);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDiveDelegate);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEnterHookDelegate);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExitHookDelegate);
 
 /**
  * 
@@ -45,6 +48,7 @@ class MOVEMENTEXHIBITION_API UExhibitionMovementComponent : public UCharacterMov
 		// Flags
 		uint8 Saved_bWantsToSprint:1 = false;
 		uint8 Saved_bWantsToDive:1 = false;
+		uint8 Saved_bWantsToHook:1 = false;
 
 		// Vars
 		uint8 Saved_bPrevWantsToCrouch:1 = false;
@@ -83,6 +87,8 @@ public:
 
 	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
 
+	virtual void UpdateCharacterStateAfterMovement(float DeltaSeconds) override;
+
 	virtual bool DoJump(bool bReplayingMoves) override;
 
 protected:
@@ -101,6 +107,16 @@ protected:
 	
 	bool IsAuthProxy() const;
 	
+	float GetCapsuleRadius() const;
+
+	float GetCapsuleHalfHeight() const;
+
+	void ToggleHookCable();
+
+	void UpdateHookCable(const float DeltaTime);
+
+	void ResetHookCable();
+	
 // Movement modes
 protected:
 	// Sliding
@@ -116,6 +132,20 @@ protected:
 	void PerformDive();
 
 	bool CanDive() const;
+
+	// Hooking
+	bool TryHook();
+
+	bool CanUseHook(const AActor* Hook) const;
+
+	void EnterHook();
+
+	void FinishHook();
+	
+	// Travel to destination
+	void PhysTravel(float deltaTime, int32 Iterations);
+
+	uint16 PrepareTravel(const FString& TravelName, const float MaxDistance, const float MaxSpeed, UCurveFloat* Curve);
 	
 // Interface
 public:
@@ -139,6 +169,15 @@ public:
 
 	UFUNCTION(BlueprintCallable)
 	bool IsDiving() const;
+	
+	UFUNCTION(BlueprintCallable)
+	void RequestHook();
+
+	UFUNCTION(BlueprintCallable)
+	void ReleaseHook();
+	
+	UFUNCTION(BlueprintPure)
+	bool IsHooking() const;
 
 	UFUNCTION(BlueprintPure)
 	FORCEINLINE float GetInitialCapsuleHalfHeight() const { return InitialCapsuleHalfHeight; };
@@ -153,6 +192,9 @@ public:
 	UFUNCTION()
 	void OnRep_JumpExtra();
 
+	UFUNCTION()
+	void OnRep_FindHook();
+
 // CMC Safe Properties
 protected:
 	bool Safe_bWantsToSprint = false;
@@ -160,6 +202,8 @@ protected:
 	bool Safe_bPrevWantsToCrouch = false;
 
 	bool Safe_bWantsToDive = false;
+
+	bool Safe_bWantsToHook = false;
 
 // FSavedMove properties
 protected:
@@ -172,6 +216,9 @@ protected:
 	
 	UPROPERTY(Transient, ReplicatedUsing=OnRep_JumpExtra)
 	bool Proxy_JumpExtra = false;
+
+	UPROPERTY(Transient, ReplicatedUsing=OnRep_FindHook)
+	bool Proxy_FindHook = false;
 	
 // Standard Properties
 protected:
@@ -220,6 +267,48 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Exhibition|Jump")
 	TObjectPtr<UAnimMontage> JumpExtraMontage;
 
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	FName TagHookName = NAME_None;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	float MaxHookDistance = 5000.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	float IgnoreHookDistance = 100.f;
+	
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	float MaxHookSpeed = 600.f;
+	
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	float ReleaseHookTolerance = 10.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook", meta=(ClampMin=0.f, ClampMax=1.f))
+	float HookBrakingFactor = 0.9f;
+	
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	TObjectPtr<UCurveFloat> HookCurve;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	bool bHandleCable = true;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook", meta=(EditCondition=bHandleCable))
+	float CableTimeToReachDestination = 0.2f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook", meta=(EditCondition=bHandleCable))
+	FName HookSocketName = NAME_None;
+
+	UPROPERTY(Transient)
+	float CurrentCableTime = 0.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook", meta=(EditCondition=bHandleCable))
+	FRuntimeFloatCurve CableCurve;
+	
+	UPROPERTY(Transient)
+	TObjectPtr<AActor> CurrentHook;
+	
+	UPROPERTY(Transient)
+	FVector TravelDestinationLocation = FVector::ZeroVector;
+
 	// TODO Probably not the ideal solution
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> CurrentAnimMontage;
@@ -240,4 +329,14 @@ protected:
 
 	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
 	FOnDiveDelegate OnDive;
+
+	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
+	FOnEnterHookDelegate OnEnterHook;
+
+	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
+	FOnExitHookDelegate OnExitHook;
+
+// Constants
+public:
+	static const FString HOOK_TRANSITION_NAME;
 };

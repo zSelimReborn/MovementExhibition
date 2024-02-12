@@ -3,10 +3,25 @@
 
 #include "Components/ExhibitionMovementComponent.h"
 
+#include "CableComponent.h"
 #include "Characters/ExhibitionCharacter.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
+#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
+
+#define SHAPES_DEBUG_DURATION 5.f
+#define LINE(Start, End, Color) DrawDebugLine(GetWorld(), Start, End, Color, false, SHAPES_DEBUG_DURATION)
+#define CAPSULE(Center, Hh, Radius, Color) DrawDebugCapsule(GetWorld(), Center, Hh, Radius, FRotator::ZeroRotator.Quaternion(), Color, false, SHAPES_DEBUG_DURATION)
+
+const FString UExhibitionMovementComponent::HOOK_TRANSITION_NAME = TEXT("Hook Travel");
+
+static TAutoConsoleVariable<bool> CVarDebugHook(
+	TEXT("MovExhibition.Debug.Hook"),
+	false,
+	TEXT("Debug info about hooking"),
+	ECVF_Default
+);
 
 #pragma region Saved Move
 
@@ -25,6 +40,11 @@ bool UExhibitionMovementComponent::FSavedMove_Exhibition::CanCombineWith(const F
 	{
 		return false;
 	}
+
+	if (Saved_bWantsToHook != NewMoveCasted->Saved_bWantsToHook)
+	{
+		return false;
+	}
 	
 	return FSavedMove_Character::CanCombineWith(NewMove, InCharacter, MaxDelta);
 }
@@ -37,6 +57,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::Clear()
 	Saved_bPrevWantsToCrouch = 0;
 	Saved_bWantsToDive = 0;
 	Saved_FlyingDiveCount = 0;
+	Saved_bWantsToHook = 0;
 }
 
 uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() const
@@ -50,6 +71,11 @@ uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() 
 	if (Saved_bWantsToDive)
 	{
 		CompressedFlags |= FLAG_Custom_1;
+	}
+
+	if (Saved_bWantsToHook)
+	{
+		CompressedFlags |= FLAG_Custom_2;
 	}
 
 	return CompressedFlags;
@@ -75,6 +101,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::SetMoveFor(ACharacter*
 	Saved_bPrevWantsToCrouch = MovComponent->Safe_bPrevWantsToCrouch;
 	Saved_bWantsToDive = MovComponent->Safe_bWantsToDive;
 	Saved_FlyingDiveCount = MovComponent->Safe_FlyingDiveCount;
+	Saved_bWantsToHook = MovComponent->Safe_bWantsToHook;
 }
 
 void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter* C)
@@ -96,6 +123,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter
 	MovComponent->Safe_bPrevWantsToCrouch = Saved_bPrevWantsToCrouch;
 	MovComponent->Safe_bWantsToDive = Saved_bWantsToDive;
 	MovComponent->Safe_FlyingDiveCount = Saved_FlyingDiveCount;
+	MovComponent->Safe_bWantsToHook = Saved_bWantsToHook;
 }
 
 #pragma endregion 
@@ -160,8 +188,20 @@ float UExhibitionMovementComponent::GetMaxSpeed() const
 	{
 		return IsCrouching()? MaxSprintCrouchedSpeed : MaxSprintSpeed;
 	}
-	
-	return Super::GetMaxSpeed();
+
+	if (!IsMovementMode(MOVE_Custom))
+	{
+		return Super::GetMaxSpeed();
+	}
+
+	switch (CustomMovementMode)
+	{
+	case CMOVE_Hook:
+		return MaxHookSpeed;
+	case CMOVE_Slide:
+	default:
+		return MaxCustomMovementSpeed;
+	}
 }
 
 float UExhibitionMovementComponent::GetMaxBrakingDeceleration() const
@@ -175,7 +215,8 @@ float UExhibitionMovementComponent::GetMaxBrakingDeceleration() const
 	{
 	case CMOVE_Slide:
 		return SlideBrakingDeceleration;
-		break;
+	case CMOVE_Hook:
+		return 0.f;
 	default:
 		return -1.f;
 	}
@@ -200,6 +241,10 @@ void UExhibitionMovementComponent::PhysCustom(float deltaTime, int32 Iterations)
 	case CMOVE_Slide:
 		PhysSlide(deltaTime, Iterations);
 		break;
+	case CMOVE_Hook:
+		PhysTravel(deltaTime, Iterations);
+		UpdateHookCable(deltaTime);
+		break;
 	default:
 		UE_LOG(LogTemp, Fatal, TEXT("PhysCustom Invalid Custom Movement Mode: %d"), CustomMovementMode);
 	}
@@ -222,6 +267,16 @@ void UExhibitionMovementComponent::OnMovementModeChanged(EMovementMode PreviousM
 	if ((PreviousMovementMode == MOVE_Falling) && IsMovingOnGround())
 	{
 		Safe_FlyingDiveCount = 0;
+	}
+
+	if (PreviousMovementMode == MOVE_Custom && PreviousCustomMode == CMOVE_Hook)
+	{
+		FinishHook();
+	}
+
+	if (IsCustomMovementMode(CMOVE_Hook))
+	{
+		EnterHook();
 	}
 }
 
@@ -252,6 +307,21 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 		Proxy_Dive = !Proxy_Dive;
 	}
 
+	// Try hooking
+	// Sim.Proxies get replicated hook state
+	if (CharacterOwner->GetLocalRole() != ROLE_SimulatedProxy)
+	{
+		if (Safe_bWantsToHook && TryHook())
+		{
+			Proxy_FindHook = !Proxy_FindHook;
+			SetMovementMode(MOVE_Custom, CMOVE_Hook);
+		}
+		else if (!Safe_bWantsToHook && IsHooking())
+		{
+			SetMovementMode(MOVE_Falling);
+		}
+	}
+
 	// Check if a montage ended
 	if (CharacterOwner->GetCurrentMontage() == nullptr)
 	{
@@ -260,6 +330,20 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 	
 	Safe_bWantsToDive = false;
 	Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
+}
+
+void UExhibitionMovementComponent::UpdateCharacterStateAfterMovement(float DeltaSeconds)
+{
+	Super::UpdateCharacterStateAfterMovement(DeltaSeconds);
+
+	const TSharedPtr<FRootMotionSource> HookMotionSource = GetRootMotionSource(FName(HOOK_TRANSITION_NAME));
+	
+	if (HookMotionSource &&
+		(HookMotionSource->Status.HasFlag(ERootMotionSourceStatusFlags::Finished) || HookMotionSource->Status.HasFlag(ERootMotionSourceStatusFlags::MarkedForRemoval))
+	)
+	{
+		Velocity -= Velocity / (1.f + (1.f - HookBrakingFactor));
+	}
 }
 
 bool UExhibitionMovementComponent::DoJump(bool bReplayingMoves)
@@ -288,6 +372,7 @@ void UExhibitionMovementComponent::UpdateFromCompressedFlags(uint8 Flags)
 
 	Safe_bWantsToSprint = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_0) != 0;
 	Safe_bWantsToDive = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_1) != 0;
+	Safe_bWantsToHook = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_2) != 0;
 }
 
 bool UExhibitionMovementComponent::IsCustomMovementMode(const ECustomMovementMode& InMovementMode) const
@@ -340,6 +425,18 @@ bool UExhibitionMovementComponent::IsAuthProxy() const
 {
 	ensure(CharacterOwner != nullptr);
 	return CharacterOwner->HasAuthority() && !CharacterOwner->IsLocallyControlled();
+}
+
+float UExhibitionMovementComponent::GetCapsuleRadius() const
+{
+	ensure(CharacterOwner != nullptr && CharacterOwner->GetCapsuleComponent() != nullptr);
+	return CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleRadius();
+}
+
+float UExhibitionMovementComponent::GetCapsuleHalfHeight() const
+{
+	ensure(CharacterOwner != nullptr && CharacterOwner->GetCapsuleComponent() != nullptr);
+	return CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 }
 
 #pragma region Slide
@@ -539,6 +636,278 @@ bool UExhibitionMovementComponent::CanDive() const
 
 #pragma endregion
 
+#pragma region Hooking
+
+bool UExhibitionMovementComponent::TryHook()
+{
+	if (!IsFalling() && !IsWalking())
+	{
+		return false;
+	}
+	
+	TArray<AActor*> AllHooks;
+	// Can be improved
+	UGameplayStatics::GetAllActorsWithTag(GetWorld(), TagHookName, AllHooks);
+
+	if (AllHooks.IsEmpty())
+	{
+		return false;
+	}
+
+	AActor* SelectedHook = nullptr;
+	float SelectedHookDistanceSrd = FMath::Pow(MaxHookDistance, 2);
+	for (AActor* Hook : AllHooks)
+	{
+		const float HookDistance = FVector::DistSquared(UpdatedComponent->GetComponentLocation(), Hook->GetActorLocation());
+		if (HookDistance <= FMath::Pow(IgnoreHookDistance, 2))
+		{
+			continue;
+		}
+		
+		if (CanUseHook(Hook) && HookDistance <= SelectedHookDistanceSrd)
+		{
+			SelectedHook = Hook;
+			SelectedHookDistanceSrd = HookDistance;
+		}
+	}
+
+	CurrentHook = SelectedHook;
+	TravelDestinationLocation = (SelectedHook != nullptr)? SelectedHook->GetActorLocation() : FVector::ZeroVector;
+	return SelectedHook != nullptr;
+}
+
+bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook) const
+{
+	if (!Hook)
+	{
+		return false;
+	}
+
+	const FVector CharacterLocation = UpdatedComponent->GetComponentLocation();
+	const FRotator CharacterViewRotation = UpdatedComponent->GetComponentRotation();
+	
+	const FVector ControlLook = CharacterViewRotation.Vector().GetSafeNormal2D();
+	const FVector HookLocation = Hook->GetActorLocation();
+	const FVector ControlLookToHook = (HookLocation - CharacterLocation).GetSafeNormal2D();
+
+	if (CVarDebugHook->GetBool())
+	{
+		LINE(CharacterLocation, CharacterLocation + ControlLook * 500.f, FColor::Red);
+		LINE(CharacterLocation, CharacterLocation + ControlLookToHook * 500.f, FColor::Green);
+	}
+
+	const bool bNear = FVector::DistSquared(CharacterLocation, HookLocation) <= FMath::Pow(MaxHookDistance, 2);
+
+	if (!bNear)
+	{
+		return false;
+	}
+
+	const bool bInFov = (ControlLook | ControlLookToHook) >= 0.8f;
+	if (!bInFov)
+	{
+		return false;
+	}
+
+	FCollisionShape Capsule = FCollisionShape::MakeCapsule(GetCapsuleRadius(), GetCapsuleHalfHeight());
+	FHitResult Hit;
+	FCollisionQueryParams IgnoreParams = ExhibitionCharacterRef->GetIgnoreCollisionParams();
+	IgnoreParams.AddIgnoredActor(Hook);
+	const bool bIsBlocked = GetWorld()->SweepSingleByProfile(
+		Hit,
+		CharacterLocation,
+		HookLocation,
+		FRotator::ZeroRotator.Quaternion(),
+		FName(TEXT("BlockAll")),
+		Capsule,
+		IgnoreParams
+	);
+
+	if (bIsBlocked && CVarDebugHook->GetBool())
+	{
+		CAPSULE(Hit.Location, Capsule.GetCapsuleHalfHeight(), Capsule.GetCapsuleRadius(), FColor::Red);
+	}
+	
+	return !bIsBlocked;
+}
+
+void UExhibitionMovementComponent::EnterHook()
+{
+	bOrientRotationToMovement = false;
+
+	PrepareTravel(HOOK_TRANSITION_NAME, MaxHookDistance, MaxHookSpeed, HookCurve);
+	
+	if (bHandleCable)
+	{
+		ToggleHookCable();
+	}
+
+	OnEnterHook.Broadcast();
+}
+
+void UExhibitionMovementComponent::FinishHook()
+{
+	Safe_bWantsToHook = false;
+	bOrientRotationToMovement = true;
+	TravelDestinationLocation = FVector::ZeroVector;
+	CurrentHook = nullptr;
+	RemoveRootMotionSource(FName(HOOK_TRANSITION_NAME));
+	
+	if (bHandleCable)
+	{
+		ResetHookCable();
+	}
+
+	OnExitHook.Broadcast();
+}
+
+void UExhibitionMovementComponent::ToggleHookCable()
+{
+	ensure(CharacterOwner != nullptr);
+
+	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
+	if (HookCable)
+	{
+		HookCable->bAttachEnd = true;
+		HookCable->bAttachStart = true;
+		HookCable->SetHiddenInGame(!HookCable->bHiddenInGame);
+		CurrentCableTime = 0.f;
+	}
+}
+
+void UExhibitionMovementComponent::UpdateHookCable(const float DeltaTime)
+{
+	ensure(CharacterOwner != nullptr);
+
+	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
+	if (HookCable && TravelDestinationLocation != FVector::ZeroVector)
+	{
+		const FVector HandLocation = (!HookSocketName.IsNone())? CharacterOwner->GetMesh()->GetSocketLocation(HookSocketName) : UpdatedComponent->GetComponentLocation();
+		const FVector TargetToHand = (TravelDestinationLocation - HandLocation).GetSafeNormal();
+		
+		const float MaxLength = FVector::Dist(HookCable->GetComponentLocation(), TravelDestinationLocation);
+		float CurrentLength = MaxLength;
+		
+		CurrentCableTime = FMath::Clamp(CurrentCableTime + DeltaTime, 0.f, CableTimeToReachDestination);
+		FVector EndLocation = TravelDestinationLocation;
+		if (CurrentCableTime < CableTimeToReachDestination)
+		{
+			const float TimeRatio = FMath::Clamp(CableCurve.GetRichCurveConst()->Eval(CurrentCableTime / CableTimeToReachDestination), 0.f, 1.f);
+			CurrentLength = FMath::Lerp(0.f, MaxLength, TimeRatio);
+			EndLocation = HandLocation + (TargetToHand * CurrentLength);
+		}
+
+		HookCable->SetUsingAbsoluteLocation(true);
+		HookCable->SetWorldLocation(EndLocation);
+		HookCable->CableLength = CurrentLength;
+	}
+}
+
+void UExhibitionMovementComponent::ResetHookCable()
+{
+	ensure(CharacterOwner != nullptr);
+
+	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
+	if (HookCable)
+	{
+		ToggleHookCable();
+		HookCable->SetWorldLocation(UpdatedComponent->GetComponentLocation());
+		HookCable->SetUsingAbsoluteLocation(false);
+		HookCable->CableLength = 0.f;
+	}
+}
+
+#pragma endregion 
+
+#pragma region Travel
+
+uint16 UExhibitionMovementComponent::PrepareTravel(const FString& TravelName, const float MaxDistance, const float MaxSpeed, UCurveFloat* Curve)
+{
+	const TSharedPtr<FRootMotionSource_RadialForce> MoveToTransition = MakeShared<FRootMotionSource_RadialForce>();
+	MoveToTransition->AccumulateMode = ERootMotionAccumulateMode::Override;
+	MoveToTransition->Priority = 6;
+	MoveToTransition->InstanceName = FName(TravelName);
+	MoveToTransition->Radius = MaxDistance;
+	MoveToTransition->bIsPush = false;
+	MoveToTransition->StrengthOverTime = Curve;
+	MoveToTransition->Strength = MaxSpeed;
+	MoveToTransition->Location = TravelDestinationLocation;
+	MoveToTransition->bUseFixedWorldDirection = false;
+
+	Velocity = FVector::ZeroVector;
+	return ApplyRootMotionSource(MoveToTransition);
+}
+
+void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
+{
+	if (deltaTime < MIN_TICK_TIME)
+	{
+		return;
+	}
+
+	if (TravelDestinationLocation == FVector::ZeroVector)
+	{
+		SetMovementMode(MOVE_Falling);
+		StartNewPhysics(deltaTime, Iterations);
+		return;
+	}
+	
+	if (!CharacterOwner || (!CharacterOwner->Controller && !bRunPhysicsWithNoController && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && (CharacterOwner->GetLocalRole() != ROLE_SimulatedProxy)))
+	{
+		Acceleration = FVector::ZeroVector;
+		Velocity = FVector::ZeroVector;
+		return;
+	}
+
+	if (UpdatedComponent->GetComponentLocation().Equals(TravelDestinationLocation, ReleaseHookTolerance))
+	{
+		SetMovementMode(MOVE_Falling);
+		StartNewPhysics(deltaTime, Iterations);
+		return;
+	}
+
+	RestorePreAdditiveRootMotionVelocity();
+
+	if( !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() )
+	{
+		if( bCheatFlying && Acceleration.IsZero() )
+		{
+			Velocity = FVector::ZeroVector;
+		}
+		CalcVelocity(deltaTime, FallingLateralFriction, true, GetMaxBrakingDeceleration());
+	}
+
+	ApplyRootMotionToVelocity(deltaTime);
+
+	Iterations++;
+	bJustTeleported = false;
+
+	FVector OldLocation = UpdatedComponent->GetComponentLocation();
+	const FVector Adjusted = Velocity * deltaTime;
+	FHitResult Hit(1.f);
+	SafeMoveUpdatedComponent(Adjusted, UpdatedComponent->GetComponentQuat(), true, Hit);
+
+	// Make velocity reflect actual move
+	if( !bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && deltaTime >= MIN_TICK_TIME)
+	{
+		Velocity = (UpdatedComponent->GetComponentLocation() - OldLocation) / deltaTime;
+	}
+
+	if (UpdatedComponent->GetComponentLocation() == OldLocation)
+	{
+		return;
+	}
+
+	if (UpdatedComponent->GetComponentLocation().Equals(TravelDestinationLocation, ReleaseHookTolerance))
+	{
+		SetMovementMode(MOVE_Falling);
+		StartNewPhysics(deltaTime, Iterations);
+		return;
+	}
+}
+
+#pragma endregion
+
 void UExhibitionMovementComponent::ToggleCrouch()
 {
 	bWantsToCrouch = !bWantsToCrouch;
@@ -575,12 +944,28 @@ bool UExhibitionMovementComponent::IsDiving() const
 	return CharacterOwner->GetCurrentMontage() == DiveMontage;
 }
 
+void UExhibitionMovementComponent::RequestHook()
+{
+	Safe_bWantsToHook = true;
+}
+
+void UExhibitionMovementComponent::ReleaseHook()
+{
+	Safe_bWantsToHook = false;
+}
+
+bool UExhibitionMovementComponent::IsHooking() const
+{
+	return IsCustomMovementMode(CMOVE_Hook);
+}
+
 void UExhibitionMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_Dive, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_JumpExtra, COND_SkipOwner);
+	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_FindHook, COND_SkipOwner);
 }
 
 void UExhibitionMovementComponent::OnRep_Dive()
@@ -605,4 +990,9 @@ void UExhibitionMovementComponent::OnRep_Dive()
 void UExhibitionMovementComponent::OnRep_JumpExtra()
 {
 	CharacterOwner->PlayAnimMontage(JumpExtraMontage);
+}
+
+void UExhibitionMovementComponent::OnRep_FindHook()
+{
+	TryHook();
 }
