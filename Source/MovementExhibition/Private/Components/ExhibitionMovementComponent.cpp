@@ -243,7 +243,7 @@ void UExhibitionMovementComponent::PhysCustom(float deltaTime, int32 Iterations)
 		break;
 	case CMOVE_Hook:
 		PhysTravel(deltaTime, Iterations);
-		UpdateHookCable();
+		UpdateHookCable(deltaTime);
 		break;
 	default:
 		UE_LOG(LogTemp, Fatal, TEXT("PhysCustom Invalid Custom Movement Mode: %d"), CustomMovementMode);
@@ -740,7 +740,6 @@ void UExhibitionMovementComponent::EnterHook()
 	if (bHandleCable)
 	{
 		ToggleHookCable();
-		UpdateHookCable();
 	}
 
 	OnEnterHook.Broadcast();
@@ -762,7 +761,7 @@ void UExhibitionMovementComponent::FinishHook()
 	OnExitHook.Broadcast();
 }
 
-void UExhibitionMovementComponent::ToggleHookCable() const
+void UExhibitionMovementComponent::ToggleHookCable()
 {
 	ensure(CharacterOwner != nullptr);
 
@@ -772,23 +771,39 @@ void UExhibitionMovementComponent::ToggleHookCable() const
 		HookCable->bAttachEnd = true;
 		HookCable->bAttachStart = true;
 		HookCable->SetHiddenInGame(!HookCable->bHiddenInGame);
+		CurrentCableTime = 0.f;
 	}
 }
 
-void UExhibitionMovementComponent::UpdateHookCable() const
+void UExhibitionMovementComponent::UpdateHookCable(const float DeltaTime)
 {
 	ensure(CharacterOwner != nullptr);
 
 	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
 	if (HookCable && TravelDestinationLocation != FVector::ZeroVector)
 	{
-		const float Length = FVector::Dist(HookCable->GetComponentLocation(), TravelDestinationLocation);
-		HookCable->SetAttachEndTo(CurrentHook, NAME_None);
-		HookCable->CableLength = Length;
+		const FVector HandLocation = (!HookSocketName.IsNone())? CharacterOwner->GetMesh()->GetSocketLocation(HookSocketName) : UpdatedComponent->GetComponentLocation();
+		const FVector TargetToHand = (TravelDestinationLocation - HandLocation).GetSafeNormal();
+		
+		const float MaxLength = FVector::Dist(HookCable->GetComponentLocation(), TravelDestinationLocation);
+		float CurrentLength = MaxLength;
+		
+		CurrentCableTime = FMath::Clamp(CurrentCableTime + DeltaTime, 0.f, CableTimeToReachDestination);
+		FVector EndLocation = TravelDestinationLocation;
+		if (CurrentCableTime < CableTimeToReachDestination)
+		{
+			const float TimeRatio = FMath::Clamp(CableCurve.GetRichCurveConst()->Eval(CurrentCableTime / CableTimeToReachDestination), 0.f, 1.f);
+			CurrentLength = FMath::Lerp(0.f, MaxLength, TimeRatio);
+			EndLocation = HandLocation + (TargetToHand * CurrentLength);
+		}
+
+		HookCable->SetUsingAbsoluteLocation(true);
+		HookCable->SetWorldLocation(EndLocation);
+		HookCable->CableLength = CurrentLength;
 	}
 }
 
-void UExhibitionMovementComponent::ResetHookCable() const
+void UExhibitionMovementComponent::ResetHookCable()
 {
 	ensure(CharacterOwner != nullptr);
 
@@ -796,7 +811,7 @@ void UExhibitionMovementComponent::ResetHookCable() const
 	if (HookCable)
 	{
 		ToggleHookCable();
-		HookCable->SetAttachEndTo(nullptr, NAME_None);
+		HookCable->SetWorldLocation(UpdatedComponent->GetComponentLocation());
 		HookCable->SetUsingAbsoluteLocation(false);
 		HookCable->CableLength = 0.f;
 	}

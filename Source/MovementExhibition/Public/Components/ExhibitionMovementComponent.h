@@ -111,11 +111,11 @@ protected:
 
 	float GetCapsuleHalfHeight() const;
 
-	void ToggleHookCable() const;
+	void ToggleHookCable();
 
-	void UpdateHookCable() const;
+	void UpdateHookCable(const float DeltaTime);
 
-	void ResetHookCable() const;
+	void ResetHookCable();
 	
 // Movement modes
 protected:
@@ -286,10 +286,22 @@ protected:
 	float HookBrakingFactor = 0.9f;
 	
 	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
-	bool bHandleCable = true;
-	
-	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
 	TObjectPtr<UCurveFloat> HookCurve;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook")
+	bool bHandleCable = true;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook", meta=(EditCondition=bHandleCable))
+	float CableTimeToReachDestination = 0.2f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook", meta=(EditCondition=bHandleCable))
+	FName HookSocketName = NAME_None;
+
+	UPROPERTY(Transient)
+	float CurrentCableTime = 0.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Hook", meta=(EditCondition=bHandleCable))
+	FRuntimeFloatCurve CableCurve;
 	
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> CurrentHook;
