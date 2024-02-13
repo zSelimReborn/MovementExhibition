@@ -137,7 +137,7 @@ protected:
 	// Hooking
 	bool TryHook();
 
-	bool CanUseHook(const AActor* Hook) const;
+	bool CanUseHook(const AActor* Hook, float& DistSqr, float& DotResult, bool& bIsBlocked) const;
 
 	void EnterHook();
 

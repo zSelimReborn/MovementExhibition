@@ -659,18 +659,20 @@ bool UExhibitionMovementComponent::TryHook()
 
 	AActor* SelectedHook = nullptr;
 	float SelectedHookDistanceSrd = FMath::Pow(MaxHookDistance, 2);
+	float SelectedDotResult = 0.f;
 	for (AActor* Hook : AllHooks)
 	{
-		const float HookDistance = FVector::DistSquared(UpdatedComponent->GetComponentLocation(), Hook->GetActorLocation());
-		if (HookDistance <= FMath::Pow(IgnoreHookDistance, 2))
-		{
-			continue;
-		}
+		float HookDistance = 0.f, DotResult = 0.f;
+		bool bIsBlocked = false;
 		
-		if (CanUseHook(Hook) && HookDistance <= SelectedHookDistanceSrd)
+		if (CanUseHook(Hook, HookDistance, DotResult, bIsBlocked) &&
+			HookDistance <= SelectedHookDistanceSrd &&
+			DotResult >= SelectedDotResult
+		)
 		{
 			SelectedHook = Hook;
 			SelectedHookDistanceSrd = HookDistance;
+			SelectedDotResult = DotResult;
 		}
 	}
 
@@ -679,7 +681,7 @@ bool UExhibitionMovementComponent::TryHook()
 	return SelectedHook != nullptr;
 }
 
-bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook) const
+bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook, float& DistSqr, float& DotResult, bool& bIsBlocked) const
 {
 	if (!Hook)
 	{
@@ -699,14 +701,16 @@ bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook) const
 		LINE(CharacterLocation, CharacterLocation + ControlLookToHook * 500.f, FColor::Green);
 	}
 
-	const bool bNear = FVector::DistSquared(CharacterLocation, HookLocation) <= FMath::Pow(MaxHookDistance, 2);
+	DistSqr = FVector::DistSquared(CharacterLocation, HookLocation);
+	const bool bNear = DistSqr <= FMath::Pow(MaxHookDistance, 2);
 
 	if (!bNear)
 	{
 		return false;
 	}
 
-	const bool bInFov = (ControlLook | ControlLookToHook) >= 0.8f;
+	DotResult = ControlLook | ControlLookToHook;
+	const bool bInFov = DotResult >= 0.8f;
 	if (!bInFov)
 	{
 		return false;
@@ -716,7 +720,7 @@ bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook) const
 	FHitResult Hit;
 	FCollisionQueryParams IgnoreParams = ExhibitionCharacterRef->GetIgnoreCollisionParams();
 	IgnoreParams.AddIgnoredActor(Hook);
-	const bool bIsBlocked = GetWorld()->SweepSingleByProfile(
+	bIsBlocked = GetWorld()->SweepSingleByProfile(
 		Hit,
 		CharacterLocation,
 		HookLocation,
