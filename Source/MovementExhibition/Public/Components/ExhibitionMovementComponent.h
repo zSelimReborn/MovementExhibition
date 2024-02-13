@@ -52,6 +52,7 @@ class MOVEMENTEXHIBITION_API UExhibitionMovementComponent : public UCharacterMov
 
 		// Vars
 		uint8 Saved_bPrevWantsToCrouch:1 = false;
+		uint8 Saved_bReachedDestination:1 = false;
 		int32 Saved_FlyingDiveCount = 0;
 	};
 
@@ -141,6 +142,8 @@ protected:
 	void EnterHook();
 
 	void FinishHook();
+
+	void OnCompleteHook();
 	
 	// Travel to destination
 	void PhysTravel(float deltaTime, int32 Iterations);
@@ -208,6 +211,8 @@ protected:
 // FSavedMove properties
 protected:
 	int32 Safe_FlyingDiveCount = 0;
+
+	bool Safe_bReachedDestination = false;
 	
 // Replication properties
 protected:

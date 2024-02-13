@@ -58,6 +58,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::Clear()
 	Saved_bWantsToDive = 0;
 	Saved_FlyingDiveCount = 0;
 	Saved_bWantsToHook = 0;
+	Saved_bReachedDestination = 0;
 }
 
 uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() const
@@ -102,6 +103,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::SetMoveFor(ACharacter*
 	Saved_bWantsToDive = MovComponent->Safe_bWantsToDive;
 	Saved_FlyingDiveCount = MovComponent->Safe_FlyingDiveCount;
 	Saved_bWantsToHook = MovComponent->Safe_bWantsToHook;
+	Saved_bReachedDestination = MovComponent->Safe_bReachedDestination;
 }
 
 void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter* C)
@@ -124,6 +126,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter
 	MovComponent->Safe_bWantsToDive = Saved_bWantsToDive;
 	MovComponent->Safe_FlyingDiveCount = Saved_FlyingDiveCount;
 	MovComponent->Safe_bWantsToHook = Saved_bWantsToHook;
+	MovComponent->Safe_bReachedDestination = Saved_bReachedDestination;
 }
 
 #pragma endregion 
@@ -342,7 +345,7 @@ void UExhibitionMovementComponent::UpdateCharacterStateAfterMovement(float Delta
 		(HookMotionSource->Status.HasFlag(ERootMotionSourceStatusFlags::Finished) || HookMotionSource->Status.HasFlag(ERootMotionSourceStatusFlags::MarkedForRemoval))
 	)
 	{
-		Velocity -= Velocity / (1.f + (1.f - HookBrakingFactor));
+		OnCompleteHook();
 	}
 }
 
@@ -761,6 +764,20 @@ void UExhibitionMovementComponent::FinishHook()
 	OnExitHook.Broadcast();
 }
 
+void UExhibitionMovementComponent::OnCompleteHook()
+{
+	if (Safe_bReachedDestination)
+	{
+		Velocity = FVector::ZeroVector;
+	}
+	else
+	{
+		Velocity -= Velocity / (1.f + (1.f - HookBrakingFactor));
+	}
+
+	Safe_bReachedDestination = false;
+}
+
 void UExhibitionMovementComponent::ToggleHookCable()
 {
 	ensure(CharacterOwner != nullptr);
@@ -834,6 +851,7 @@ uint16 UExhibitionMovementComponent::PrepareTravel(const FString& TravelName, co
 	MoveToTransition->Location = TravelDestinationLocation;
 	MoveToTransition->bUseFixedWorldDirection = false;
 
+	Safe_bReachedDestination = false;
 	Velocity = FVector::ZeroVector;
 	return ApplyRootMotionSource(MoveToTransition);
 }
@@ -849,6 +867,7 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 	{
 		SetMovementMode(MOVE_Falling);
 		StartNewPhysics(deltaTime, Iterations);
+		Safe_bReachedDestination = false;
 		return;
 	}
 	
@@ -863,6 +882,7 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 	{
 		SetMovementMode(MOVE_Falling);
 		StartNewPhysics(deltaTime, Iterations);
+		Safe_bReachedDestination = true;
 		return;
 	}
 
@@ -902,6 +922,7 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 	{
 		SetMovementMode(MOVE_Falling);
 		StartNewPhysics(deltaTime, Iterations);
+		Safe_bReachedDestination = true;
 		return;
 	}
 }
