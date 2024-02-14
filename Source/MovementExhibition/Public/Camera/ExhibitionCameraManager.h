@@ -7,6 +7,8 @@
 #include "ExhibitionCameraManager.generated.h"
 
 class AExhibitionCharacter;
+class UExhibitionMovementComponent;
+class UCameraShakeBase;
 
 /**
  * 
@@ -17,9 +19,16 @@ class MOVEMENTEXHIBITION_API AExhibitionCameraManager : public APlayerCameraMana
 	GENERATED_BODY()
 
 protected:
+	void Setup();
+	
 	virtual void UpdateViewTarget(FTViewTarget& OutVT, float DeltaTime) override;
 
 	void ComputeCrouch(FTViewTarget& OutVT, float DeltaTime);
+	void ComputeHook(FTViewTarget& OutVT, float DeltaTime);
+	void HandleCameraShake(float DeltaTime);
+
+public:
+	virtual void InitializeFor(APlayerController* PC) override;
 
 // Properties
 protected:
@@ -43,4 +52,28 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category="Crouch")
 	FRuntimeFloatCurve CrouchFOVCurve;
+
+	UPROPERTY(EditDefaultsOnly, Category="Hooking")
+	float HookBlurAmountOffset = 0.3f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Hooking")
+	float HookBlurMaxDistortionOffset = 2.f;
+	
+	UPROPERTY(EditDefaultsOnly, Category="Hooking")
+	float HookBlurSpeedThreshold = 600.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Camera Shake")
+	TSubclassOf<UCameraShakeBase> IdleCameraShake;
+
+	UPROPERTY(EditDefaultsOnly, Category="Camera Shake")
+	TSubclassOf<UCameraShakeBase> WalkCameraShake;
+	
+	UPROPERTY(EditDefaultsOnly, Category="Camera Shake")
+	TSubclassOf<UCameraShakeBase> SprintCameraShake;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AExhibitionCharacter> CharacterRef;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UExhibitionMovementComponent> MovementComponentRef;
 };

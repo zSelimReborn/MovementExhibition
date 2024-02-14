@@ -6,29 +6,48 @@
 #include "Characters/ExhibitionCharacter.h"
 #include "Components/ExhibitionMovementComponent.h"
 
-void AExhibitionCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float DeltaTime)
+void AExhibitionCameraManager::Setup()
 {
-	Super::UpdateViewTarget(OutVT, DeltaTime);
+	if (CharacterRef != nullptr && MovementComponentRef != nullptr)
+	{
+		return;
+	}
+	
+	const APlayerController* PC = GetOwningPlayerController();
+	if (PC == nullptr)
+	{
+		return;
+	}
 
-	ComputeCrouch(OutVT, DeltaTime);
-}
-
-void AExhibitionCameraManager::ComputeCrouch(FTViewTarget& OutVT, float DeltaTime)
-{
-	AExhibitionCharacter* CharacterRef = Cast<AExhibitionCharacter>(GetOwningPlayerController()->GetCharacter());
+	CharacterRef = Cast<AExhibitionCharacter>(PC->GetCharacter());
 	if (CharacterRef == nullptr)
 	{
 		return;
 	}
 
-	UExhibitionMovementComponent* ExhibitionMovementComponent = CharacterRef->GetExhibitionMovComponent();
-	if (ExhibitionMovementComponent == nullptr)
+	MovementComponentRef = CharacterRef->GetExhibitionMovComponent();
+}
+
+void AExhibitionCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float DeltaTime)
+{
+	Super::UpdateViewTarget(OutVT, DeltaTime);
+
+	Setup();
+	ComputeCrouch(OutVT, DeltaTime);
+	ComputeHook(OutVT, DeltaTime);
+
+	HandleCameraShake(DeltaTime);
+}
+
+void AExhibitionCameraManager::ComputeCrouch(FTViewTarget& OutVT, float DeltaTime)
+{
+	if (MovementComponentRef == nullptr)
 	{
 		return;
 	}
 
 	float TimeOffset = DeltaTime;
-	if (!ExhibitionMovementComponent->IsCrouching())
+	if (!MovementComponentRef->IsCrouching())
 	{
 		TimeOffset = -DeltaTime;
 	}
@@ -39,16 +58,76 @@ void AExhibitionCameraManager::ComputeCrouch(FTViewTarget& OutVT, float DeltaTim
 	const float LocationRatio = CrouchLocationCurve.GetRichCurveConst()->Eval(CrouchLocationTime / CrouchLocationDuration);
 	const float FOVRatio = CrouchFOVCurve.GetRichCurveConst()->Eval(CrouchFOVTime / CrouchFOVDuration);
 
-	const FVector TargetLocationOffset = {0.f, 0.f, ExhibitionMovementComponent->GetCrouchedHalfHeight() - ExhibitionMovementComponent->GetInitialCapsuleHalfHeight()};
+	const FVector TargetLocationOffset = {0.f, 0.f, MovementComponentRef->GetCrouchedHalfHeight() - MovementComponentRef->GetInitialCapsuleHalfHeight()};
 	
 	FVector LocationOffset = FMath::Lerp(FVector::ZeroVector, TargetLocationOffset, LocationRatio);
 	const float FOVOffset = FMath::Lerp(0.f, -CrouchOffsetFOV, FOVRatio);
 	
-	if (ExhibitionMovementComponent->IsCrouching())
+	if (MovementComponentRef->IsCrouching())
 	{
 		LocationOffset -= TargetLocationOffset;
 	}
 	
 	OutVT.POV.Location += LocationOffset;
 	OutVT.POV.FOV += FOVOffset;
+}
+
+void AExhibitionCameraManager::ComputeHook(FTViewTarget& OutVT, float DeltaTime)
+{
+	if (MovementComponentRef == nullptr)
+	{
+		return;
+	}
+
+	const float CurrentSpeedSqr = MovementComponentRef->Velocity.SizeSquared();
+	if (MovementComponentRef->IsHooking() && CurrentSpeedSqr >= FMath::Square(HookBlurSpeedThreshold))
+	{
+		OutVT.POV.PostProcessSettings.bOverride_MotionBlurAmount = true;
+		OutVT.POV.PostProcessSettings.bOverride_MotionBlurMax = true;
+		OutVT.POV.PostProcessSettings.MotionBlurAmount += HookBlurAmountOffset;
+		OutVT.POV.PostProcessSettings.MotionBlurMax += HookBlurMaxDistortionOffset;
+	}
+	else if (OutVT.POV.PostProcessSettings.bOverride_MotionBlurAmount)
+	{
+		OutVT.POV.PostProcessSettings.bOverride_MotionBlurAmount = false;
+		OutVT.POV.PostProcessSettings.bOverride_MotionBlurMax = false;
+		OutVT.POV.PostProcessSettings.MotionBlurAmount -= HookBlurAmountOffset;
+		OutVT.POV.PostProcessSettings.MotionBlurMax -= HookBlurMaxDistortionOffset;
+	}
+}
+
+void AExhibitionCameraManager::HandleCameraShake(float DeltaTime)
+{
+	Setup();
+
+	if (MovementComponentRef == nullptr)
+	{
+		return;
+	}
+
+	if (!MovementComponentRef->IsWalking())
+	{
+		StopAllCameraShakes();
+	}
+
+	const float SpeedSqr = MovementComponentRef->Velocity.SizeSquared();
+	if (MovementComponentRef->IsSprinting())
+	{
+		StartCameraShake(SprintCameraShake);
+	}
+	else if (SpeedSqr > 0)
+	{
+		StartCameraShake(WalkCameraShake);
+	}
+	else
+	{
+		StartCameraShake(IdleCameraShake);
+	}
+}
+
+void AExhibitionCameraManager::InitializeFor(APlayerController* PC)
+{
+	Super::InitializeFor(PC);
+
+	Setup();
 }
