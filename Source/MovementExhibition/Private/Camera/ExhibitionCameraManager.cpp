@@ -79,6 +79,11 @@ void AExhibitionCameraManager::ComputeHook(FTViewTarget& OutVT, float DeltaTime)
 		return;
 	}
 
+	if (!OutVT.POV.PostProcessSettings.WeightedBlendables.Array.IsValidIndex(0))
+	{
+		OutVT.POV.PostProcessSettings.WeightedBlendables.Array.EmplaceAt(0, FWeightedBlendable(0.f, HookSpeedLines.LoadSynchronous()));
+	}
+	
 	const float CurrentSpeedSqr = MovementComponentRef->Velocity.SizeSquared();
 	if (MovementComponentRef->IsHooking() && CurrentSpeedSqr >= FMath::Square(HookBlurSpeedThreshold))
 	{
@@ -86,6 +91,8 @@ void AExhibitionCameraManager::ComputeHook(FTViewTarget& OutVT, float DeltaTime)
 		OutVT.POV.PostProcessSettings.bOverride_MotionBlurMax = true;
 		OutVT.POV.PostProcessSettings.MotionBlurAmount += HookBlurAmountOffset;
 		OutVT.POV.PostProcessSettings.MotionBlurMax += HookBlurMaxDistortionOffset;
+
+		OutVT.POV.PostProcessSettings.WeightedBlendables.Array[0].Weight = 1.f;
 	}
 	else if (OutVT.POV.PostProcessSettings.bOverride_MotionBlurAmount)
 	{
@@ -93,7 +100,14 @@ void AExhibitionCameraManager::ComputeHook(FTViewTarget& OutVT, float DeltaTime)
 		OutVT.POV.PostProcessSettings.bOverride_MotionBlurMax = false;
 		OutVT.POV.PostProcessSettings.MotionBlurAmount -= HookBlurAmountOffset;
 		OutVT.POV.PostProcessSettings.MotionBlurMax -= HookBlurMaxDistortionOffset;
+		OutVT.POV.PostProcessSettings.WeightedBlendables.Array[0].Weight = 0.f;
 	}
+
+}
+
+void AExhibitionCameraManager::ToggleSpeedLines(FTViewTarget& OutVT, float DeltaTime, bool bActivate)
+{
+	
 }
 
 void AExhibitionCameraManager::HandleCameraShake(float DeltaTime)

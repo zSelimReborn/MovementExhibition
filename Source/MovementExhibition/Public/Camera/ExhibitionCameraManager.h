@@ -24,7 +24,10 @@ protected:
 	virtual void UpdateViewTarget(FTViewTarget& OutVT, float DeltaTime) override;
 
 	void ComputeCrouch(FTViewTarget& OutVT, float DeltaTime);
+	
 	void ComputeHook(FTViewTarget& OutVT, float DeltaTime);
+	void ToggleSpeedLines(FTViewTarget& OutVT, float DeltaTime, bool bActivate);
+	
 	void HandleCameraShake(float DeltaTime);
 
 public:
@@ -61,6 +64,9 @@ protected:
 	
 	UPROPERTY(EditDefaultsOnly, Category="Hooking")
 	float HookBlurSpeedThreshold = 600.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Hooking")
+	TSoftObjectPtr<UMaterialInstance> HookSpeedLines;
 
 	UPROPERTY(EditDefaultsOnly, Category="Camera Shake")
 	TSubclassOf<UCameraShakeBase> IdleCameraShake;
