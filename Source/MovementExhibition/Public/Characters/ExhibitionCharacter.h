@@ -32,9 +32,15 @@ public:
 
 	virtual void Jump() override;
 
+	virtual void StopJumping() override;
+
 	FORCEINLINE UExhibitionMovementComponent* GetExhibitionMovComponent() { return ExhibitionMovementComponent; };
 
 	FCollisionQueryParams GetIgnoreCollisionParams() const;
+
+// Flags
+public:
+	bool bCustomPressedJump = false;
 
 // Components
 protected:

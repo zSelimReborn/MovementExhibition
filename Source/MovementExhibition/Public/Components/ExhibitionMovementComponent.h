@@ -15,6 +15,7 @@ enum ECustomMovementMode
 	CMOVE_None			UMETA(Hidden),
 	CMOVE_Slide			UMETA(DisplayName = "Slide"),
 	CMOVE_Hook			UMETA(DisplayName = "Hook"),
+	CMOVE_Rope			UMETA(DisplayName = "On Rope"),
 	CMOVE_MAX			UMETA(Hidden),
 };
 
@@ -49,6 +50,7 @@ class MOVEMENTEXHIBITION_API UExhibitionMovementComponent : public UCharacterMov
 		uint8 Saved_bWantsToSprint:1 = false;
 		uint8 Saved_bWantsToDive:1 = false;
 		uint8 Saved_bWantsToHook:1 = false;
+		uint8 Saved_bCustomPressedJump:1 = false;
 
 		// Vars
 		uint8 Saved_bPrevWantsToCrouch:1 = false;
@@ -117,6 +119,8 @@ protected:
 	void UpdateHookCable(const float DeltaTime);
 
 	void ResetHookCable();
+
+	static bool IsRootMotionEnded(const TSharedPtr<FRootMotionSource>&);
 	
 // Movement modes
 protected:
@@ -144,11 +148,23 @@ protected:
 	void FinishHook();
 
 	void OnCompleteHook();
+
+	// Rope
+	bool TryRope();
+
+	void EnterRope();
+
+	void FinishRope();
 	
 	// Travel to destination
 	void PhysTravel(float deltaTime, int32 Iterations);
 
 	uint16 PrepareTravel(const FString& TravelName, const float MaxDistance, const float MaxSpeed, UCurveFloat* Curve);
+
+	// Generic transitions
+	uint16 PrepareTransition(const FString& TransitionName, const FVector& Destination);
+
+	void HandleEndTransition(const FRootMotionSource&);
 	
 // Interface
 public:
@@ -183,6 +199,9 @@ public:
 	bool IsHooking() const;
 
 	UFUNCTION(BlueprintPure)
+	bool IsOnRope() const;
+
+	UFUNCTION(BlueprintPure)
 	FORCEINLINE float GetInitialCapsuleHalfHeight() const { return InitialCapsuleHalfHeight; };
 
 // Replication
@@ -207,6 +226,8 @@ protected:
 	bool Safe_bWantsToDive = false;
 
 	bool Safe_bWantsToHook = false;
+
+	uint16 CurrentTransitionId;
 
 // FSavedMove properties
 protected:
@@ -310,9 +331,24 @@ protected:
 	
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> CurrentHook;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
+	FName TagRopeName = NAME_None;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
+	FName TagRopeDestinationName = NAME_None;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
+	float MaxRopeSpeed = 800.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
+	float RopeReleaseTolerance = 50.f;
 	
 	UPROPERTY(Transient)
 	FVector TravelDestinationLocation = FVector::ZeroVector;
+
+	UPROPERTY(Transient)
+	float TravelTolerance = 0.f;
 
 	// TODO Probably not the ideal solution
 	UPROPERTY(Transient)
@@ -343,5 +379,8 @@ protected:
 
 // Constants
 public:
-	static const FString HOOK_TRANSITION_NAME;
+	static const FString HOOK_TRAVEL_NAME;
+
+	static const FString ROPE_TRAVEL_NAME;
+	static const FString ROPE_TRANSITION_NAME;
 };

@@ -14,7 +14,10 @@
 #define LINE(Start, End, Color) DrawDebugLine(GetWorld(), Start, End, Color, false, SHAPES_DEBUG_DURATION)
 #define CAPSULE(Center, Hh, Radius, Color) DrawDebugCapsule(GetWorld(), Center, Hh, Radius, FRotator::ZeroRotator.Quaternion(), Color, false, SHAPES_DEBUG_DURATION)
 
-const FString UExhibitionMovementComponent::HOOK_TRANSITION_NAME = TEXT("Hook Travel");
+const FString UExhibitionMovementComponent::HOOK_TRAVEL_NAME = TEXT("HookTravel");
+
+const FString UExhibitionMovementComponent::ROPE_TRAVEL_NAME = TEXT("RopeTravel");
+const FString UExhibitionMovementComponent::ROPE_TRANSITION_NAME = TEXT("RopeTransition");
 
 static TAutoConsoleVariable<bool> CVarDebugHook(
 	TEXT("MovExhibition.Debug.Hook"),
@@ -59,6 +62,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::Clear()
 	Saved_FlyingDiveCount = 0;
 	Saved_bWantsToHook = 0;
 	Saved_bReachedDestination = 0;
+	Saved_bCustomPressedJump = 0;
 }
 
 uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() const
@@ -77,6 +81,11 @@ uint8 UExhibitionMovementComponent::FSavedMove_Exhibition::GetCompressedFlags() 
 	if (Saved_bWantsToHook)
 	{
 		CompressedFlags |= FLAG_Custom_2;
+	}
+
+	if (Saved_bCustomPressedJump)
+	{
+		CompressedFlags |= FLAG_JumpPressed; 
 	}
 
 	return CompressedFlags;
@@ -104,6 +113,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::SetMoveFor(ACharacter*
 	Saved_FlyingDiveCount = MovComponent->Safe_FlyingDiveCount;
 	Saved_bWantsToHook = MovComponent->Safe_bWantsToHook;
 	Saved_bReachedDestination = MovComponent->Safe_bReachedDestination;
+	Saved_bCustomPressedJump = MovComponent->ExhibitionCharacterRef->bCustomPressedJump;
 }
 
 void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter* C)
@@ -127,6 +137,7 @@ void UExhibitionMovementComponent::FSavedMove_Exhibition::PrepMoveFor(ACharacter
 	MovComponent->Safe_FlyingDiveCount = Saved_FlyingDiveCount;
 	MovComponent->Safe_bWantsToHook = Saved_bWantsToHook;
 	MovComponent->Safe_bReachedDestination = Saved_bReachedDestination;
+	MovComponent->ExhibitionCharacterRef->bCustomPressedJump = Saved_bCustomPressedJump;
 }
 
 #pragma endregion 
@@ -248,6 +259,9 @@ void UExhibitionMovementComponent::PhysCustom(float deltaTime, int32 Iterations)
 		PhysTravel(deltaTime, Iterations);
 		UpdateHookCable(deltaTime);
 		break;
+	case CMOVE_Rope:
+		PhysTravel(deltaTime, Iterations);
+		break;
 	default:
 		UE_LOG(LogTemp, Fatal, TEXT("PhysCustom Invalid Custom Movement Mode: %d"), CustomMovementMode);
 	}
@@ -280,6 +294,16 @@ void UExhibitionMovementComponent::OnMovementModeChanged(EMovementMode PreviousM
 	if (IsCustomMovementMode(CMOVE_Hook))
 	{
 		EnterHook();
+	}
+
+	if (PreviousMovementMode == MOVE_Custom && PreviousCustomMode == CMOVE_Rope)
+	{
+		FinishRope();
+	}
+
+	if (IsCustomMovementMode(CMOVE_Rope))
+	{
+		EnterRope();
 	}
 }
 
@@ -325,6 +349,21 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 		}
 	}
 
+	if (ExhibitionCharacterRef->bCustomPressedJump)
+	{
+		if (TryRope())
+		{
+			ExhibitionCharacterRef->StopJumping();
+		}
+		else
+		{
+			ExhibitionCharacterRef->bCustomPressedJump = false;
+			CharacterOwner->bPressedJump = true;
+			CharacterOwner->CheckJumpInput(DeltaSeconds);
+			bOrientRotationToMovement = true;
+		}
+	}
+
 	// Check if a montage ended
 	if (CharacterOwner->GetCurrentMontage() == nullptr)
 	{
@@ -339,13 +378,18 @@ void UExhibitionMovementComponent::UpdateCharacterStateAfterMovement(float Delta
 {
 	Super::UpdateCharacterStateAfterMovement(DeltaSeconds);
 
-	const TSharedPtr<FRootMotionSource> HookMotionSource = GetRootMotionSource(FName(HOOK_TRANSITION_NAME));
+	const TSharedPtr<FRootMotionSource> HookMotionSource = GetRootMotionSource(FName(HOOK_TRAVEL_NAME));
 	
-	if (HookMotionSource &&
-		(HookMotionSource->Status.HasFlag(ERootMotionSourceStatusFlags::Finished) || HookMotionSource->Status.HasFlag(ERootMotionSourceStatusFlags::MarkedForRemoval))
-	)
+	if (IsRootMotionEnded(HookMotionSource))
 	{
 		OnCompleteHook();
+	}
+	
+	const TSharedPtr<FRootMotionSource> CurrentTransition = GetRootMotionSourceByID(CurrentTransitionId);
+	if (IsRootMotionEnded(CurrentTransition))
+	{
+		HandleEndTransition(*CurrentTransition.Get());
+		RemoveRootMotionSourceByID(CurrentTransitionId);
 	}
 }
 
@@ -678,6 +722,7 @@ bool UExhibitionMovementComponent::TryHook()
 
 	CurrentHook = SelectedHook;
 	TravelDestinationLocation = (SelectedHook != nullptr)? SelectedHook->GetActorLocation() : FVector::ZeroVector;
+	TravelTolerance = ReleaseHookTolerance;
 	return SelectedHook != nullptr;
 }
 
@@ -742,7 +787,7 @@ void UExhibitionMovementComponent::EnterHook()
 {
 	bOrientRotationToMovement = false;
 
-	PrepareTravel(HOOK_TRANSITION_NAME, MaxHookDistance, MaxHookSpeed, HookCurve);
+	PrepareTravel(HOOK_TRAVEL_NAME, MaxHookDistance, MaxHookSpeed, HookCurve);
 	
 	if (bHandleCable)
 	{
@@ -757,8 +802,9 @@ void UExhibitionMovementComponent::FinishHook()
 	Safe_bWantsToHook = false;
 	bOrientRotationToMovement = true;
 	TravelDestinationLocation = FVector::ZeroVector;
+	TravelTolerance = 0.f;
 	CurrentHook = nullptr;
-	RemoveRootMotionSource(FName(HOOK_TRANSITION_NAME));
+	RemoveRootMotionSource(FName(HOOK_TRAVEL_NAME));
 	
 	if (bHandleCable)
 	{
@@ -780,6 +826,88 @@ void UExhibitionMovementComponent::OnCompleteHook()
 	}
 
 	Safe_bReachedDestination = false;
+}
+
+bool UExhibitionMovementComponent::TryRope()
+{
+	const float CurrentZVelocity = Velocity.Z;
+
+	FHitResult Hit;
+
+	if (IsFalling() && CurrentZVelocity < 0.f)
+	{
+	}
+	else
+	{
+		const FVector StartTrace = UpdatedComponent->GetComponentLocation();
+		const float JumpHeight = GetMaxJumpHeightWithJumpTime();
+		const FVector EndTrace = StartTrace + FVector{0.f, 0.f, JumpHeight};
+		
+		FCollisionShape CollisionCapsule = FCollisionShape::MakeCapsule(GetCapsuleRadius(), GetCapsuleHalfHeight());
+		FCollisionQueryParams QueryParams = ExhibitionCharacterRef->GetIgnoreCollisionParams();
+		QueryParams.TraceTag = FName(TEXT("RopeSearch"));
+
+		// TODO Improve this query
+		const bool bBlocked = GetWorld()->
+			SweepSingleByProfile(
+				Hit,
+				StartTrace,
+				EndTrace,
+				UpdatedComponent->GetComponentQuat(),
+				FName(TEXT("BlockAll")),
+				CollisionCapsule,
+				QueryParams
+		);
+
+		if (bBlocked)
+		{
+			if (Hit.GetActor() && Hit.GetActor()->ActorHasTag(TagRopeName))
+			{
+				const AActor* HitActor = Hit.GetActor();
+				USceneComponent* Destination = HitActor->FindComponentByTag<USceneComponent>(TagRopeDestinationName);
+				if (Destination == nullptr)
+				{
+					return false;
+				}
+
+				// TODO Don't start if we're too near destination
+				// TODO Check if reachable
+				// TODO Pass duration to transition
+				// TODO Play montage
+				TravelDestinationLocation = Destination->GetComponentLocation();
+				TravelTolerance = RopeReleaseTolerance;
+
+				FRotator NewRotation = (TravelDestinationLocation - UpdatedComponent->GetComponentLocation()).Rotation();
+				NewRotation.Pitch = 0.f;
+				NewRotation.Roll = 0.f;
+
+				FHitResult RotateResult;
+				SafeMoveUpdatedComponent(FVector::ZeroVector, NewRotation.Quaternion(), false, RotateResult);
+				
+				SetMovementMode(MOVE_Flying);
+				const FVector TransitionDestination = Hit.Location + FVector::DownVector * GetCapsuleHalfHeight();
+				PrepareTransition(ROPE_TRANSITION_NAME, TransitionDestination);
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+void UExhibitionMovementComponent::EnterRope()
+{
+	bOrientRotationToMovement = false;
+	
+	const float Distance = FVector::Dist(UpdatedComponent->GetComponentLocation(), TravelDestinationLocation) + 1.f;
+	PrepareTravel(ROPE_TRAVEL_NAME, Distance, MaxRopeSpeed, nullptr);
+}
+
+void UExhibitionMovementComponent::FinishRope()
+{
+	bOrientRotationToMovement = true;
+	
+	RemoveRootMotionSource(FName(ROPE_TRAVEL_NAME));
 }
 
 void UExhibitionMovementComponent::ToggleHookCable()
@@ -838,7 +966,18 @@ void UExhibitionMovementComponent::ResetHookCable()
 	}
 }
 
-#pragma endregion 
+#pragma endregion
+
+bool UExhibitionMovementComponent::IsRootMotionEnded(const TSharedPtr<FRootMotionSource>& Source)
+{
+	if (!Source.IsValid())
+	{
+		return false;
+	}
+
+	return Source->Status.HasFlag(ERootMotionSourceStatusFlags::Finished) ||
+		Source->Status.HasFlag(ERootMotionSourceStatusFlags::MarkedForRemoval);
+}
 
 #pragma region Travel
 
@@ -858,6 +997,29 @@ uint16 UExhibitionMovementComponent::PrepareTravel(const FString& TravelName, co
 	Safe_bReachedDestination = false;
 	Velocity = FVector::ZeroVector;
 	return ApplyRootMotionSource(MoveToTransition);
+}
+
+uint16 UExhibitionMovementComponent::PrepareTransition(const FString& TransitionName, const FVector& Destination)
+{
+	const TSharedPtr<FRootMotionSource_MoveToForce> NewTransition = MakeShared<FRootMotionSource_MoveToForce>();
+	NewTransition->StartLocation = UpdatedComponent->GetComponentLocation();
+	NewTransition->TargetLocation = Destination;
+	NewTransition->InstanceName = FName(TransitionName);
+	NewTransition->AccumulateMode = ERootMotionAccumulateMode::Override;
+	NewTransition->Duration = 0.5f;
+
+	Velocity = FVector::ZeroVector;
+	CurrentTransitionId = ApplyRootMotionSource(NewTransition);
+
+	return CurrentTransitionId;
+}
+
+void UExhibitionMovementComponent::HandleEndTransition(const FRootMotionSource& Source)
+{
+	if (Source.InstanceName.IsEqual(FName(ROPE_TRANSITION_NAME)))
+	{
+		SetMovementMode(MOVE_Custom, CMOVE_Rope);
+	}
 }
 
 void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
@@ -882,7 +1044,7 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 		return;
 	}
 
-	if (UpdatedComponent->GetComponentLocation().Equals(TravelDestinationLocation, ReleaseHookTolerance))
+	if (UpdatedComponent->GetComponentLocation().Equals(TravelDestinationLocation, TravelTolerance))
 	{
 		SetMovementMode(MOVE_Falling);
 		StartNewPhysics(deltaTime, Iterations);
@@ -922,7 +1084,7 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 		return;
 	}
 
-	if (UpdatedComponent->GetComponentLocation().Equals(TravelDestinationLocation, ReleaseHookTolerance))
+	if (UpdatedComponent->GetComponentLocation().Equals(TravelDestinationLocation, TravelTolerance))
 	{
 		SetMovementMode(MOVE_Falling);
 		StartNewPhysics(deltaTime, Iterations);
@@ -982,6 +1144,11 @@ void UExhibitionMovementComponent::ReleaseHook()
 bool UExhibitionMovementComponent::IsHooking() const
 {
 	return IsCustomMovementMode(CMOVE_Hook);
+}
+
+bool UExhibitionMovementComponent::IsOnRope() const
+{
+	return IsCustomMovementMode(CMOVE_Rope);
 }
 
 void UExhibitionMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

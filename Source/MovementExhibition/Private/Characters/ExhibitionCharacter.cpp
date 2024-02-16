@@ -60,8 +60,16 @@ void AExhibitionCharacter::Jump()
 	}
 	else
 	{
+		bCustomPressedJump = true;
 		Super::Jump();
+		bPressedJump = false;
 	}
+}
+
+void AExhibitionCharacter::StopJumping()
+{
+	bCustomPressedJump = false;
+	Super::StopJumping();
 }
 
 FCollisionQueryParams AExhibitionCharacter::GetIgnoreCollisionParams() const
