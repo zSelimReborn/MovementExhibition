@@ -84,3 +84,12 @@ FCollisionQueryParams AExhibitionCharacter::GetIgnoreCollisionParams() const
 	
 	return Params;
 }
+
+TArray<TObjectPtr<AActor>> AExhibitionCharacter::GetIgnoredActors()
+{
+	TArray<TObjectPtr<AActor>> IgnoredActors;
+	GetAllChildActors(IgnoredActors);
+	IgnoredActors.Add(this);
+	
+	return IgnoredActors;
+}

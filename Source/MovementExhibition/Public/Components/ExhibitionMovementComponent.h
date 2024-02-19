@@ -162,7 +162,7 @@ protected:
 	uint16 PrepareTravel(const FString& TravelName, const float MaxDistance, const float MaxSpeed, UCurveFloat* Curve);
 
 	// Generic transitions
-	uint16 PrepareTransition(const FString& TransitionName, const FVector& Destination);
+	uint16 PrepareTransition(const FString& TransitionName, const FVector& Destination, const float Duration);
 
 	void HandleEndTransition(const FRootMotionSource&);
 	
@@ -338,11 +338,20 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
 	FName TagRopeDestinationName = NAME_None;
 
+	UPROPERTY(EditAnywhere, Category="Exhibition|Rope", meta=(ClampMin=0.f, ClampMax=100.f))
+	float JumpAdditive = 35.f;
+	
+	UPROPERTY(EditAnywhere, Category="Exhibition|Rope", meta=(ClampMin=0.1f))
+    float JumpToRopeMaxDuration = 0.2f;
+
 	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
 	float MaxRopeSpeed = 800.f;
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
 	float RopeReleaseTolerance = 50.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
+	float IgnoreRopeDistance = 200.f;
 	
 	UPROPERTY(Transient)
 	FVector TravelDestinationLocation = FVector::ZeroVector;

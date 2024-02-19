@@ -356,7 +356,7 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 
 	if (ExhibitionCharacterRef->bCustomPressedJump)
 	{
-		if (TryRope())
+		if (!IsOnRope() && TryRope())
 		{
 			ExhibitionCharacterRef->StopJumping();
 		}
@@ -400,6 +400,7 @@ void UExhibitionMovementComponent::UpdateCharacterStateAfterMovement(float Delta
 
 bool UExhibitionMovementComponent::DoJump(bool bReplayingMoves)
 {
+	// TODO handle rope jump
 	const bool bJumped = Super::DoJump(bReplayingMoves);
 	if (bJumped)
 	{
@@ -836,65 +837,80 @@ void UExhibitionMovementComponent::OnCompleteHook()
 
 bool UExhibitionMovementComponent::TryRope()
 {
-	const float CurrentZVelocity = Velocity.Z;
+	const FVector StartTrace = UpdatedComponent->GetComponentLocation() + FVector::UpVector * GetCapsuleHalfHeight();
+	const float JumpHeight = GetMaxJumpHeightWithJumpTime();
+	FCollisionShape CollisionCapsule = FCollisionShape::MakeCapsule(GetCapsuleRadius(), GetCapsuleHalfHeight());
 
-	FHitResult Hit;
+	const float Additive = FMath::Clamp(JumpAdditive, 0.f, 100.f);
+	const FVector JumpVelocity = {Velocity.X, Velocity.Y, JumpHeight + (GetCapsuleHalfHeight() * 2) + Additive};
+	FPredictProjectilePathParams JumpSimulatePath;
+	JumpSimulatePath.StartLocation = StartTrace;
+	JumpSimulatePath.LaunchVelocity = JumpVelocity;
+	JumpSimulatePath.ActorsToIgnore = ExhibitionCharacterRef->GetIgnoredActors();
+	JumpSimulatePath.bTraceWithCollision = true;
+	JumpSimulatePath.ProjectileRadius = GetCapsuleRadius();
+	// TODO CVar
+	//JumpSimulatePath.DrawDebugType = EDrawDebugTrace::ForDuration;
+	//JumpSimulatePath.DrawDebugTime = 5.f;
 
-	if (IsFalling() && CurrentZVelocity < 0.f)
+	FPredictProjectilePathResult JumpSimulateResult;
+	const bool bBlocked = UGameplayStatics::PredictProjectilePath(
+		GetWorld(),
+		JumpSimulatePath,
+		JumpSimulateResult
+	);
+	
+	if (bBlocked)
 	{
-	}
-	else
-	{
-		const FVector StartTrace = UpdatedComponent->GetComponentLocation();
-		const float JumpHeight = GetMaxJumpHeightWithJumpTime();
-		const FVector EndTrace = StartTrace + FVector{0.f, 0.f, JumpHeight};
-		
-		FCollisionShape CollisionCapsule = FCollisionShape::MakeCapsule(GetCapsuleRadius(), GetCapsuleHalfHeight());
-		FCollisionQueryParams QueryParams = ExhibitionCharacterRef->GetIgnoreCollisionParams();
-		QueryParams.TraceTag = FName(TEXT("RopeSearch"));
-
-		// TODO Improve this query
-		const bool bBlocked = GetWorld()->
-			SweepSingleByProfile(
-				Hit,
-				StartTrace,
-				EndTrace,
-				UpdatedComponent->GetComponentQuat(),
-				FName(TEXT("BlockAll")),
-				CollisionCapsule,
-				QueryParams
-		);
-
-		if (bBlocked)
+		const FHitResult Hit = JumpSimulateResult.HitResult;
+		if (Hit.GetActor() && Hit.GetActor()->ActorHasTag(TagRopeName))
 		{
-			if (Hit.GetActor() && Hit.GetActor()->ActorHasTag(TagRopeName))
+			const AActor* HitActor = Hit.GetActor();
+			USceneComponent* Destination = HitActor->FindComponentByTag<USceneComponent>(TagRopeDestinationName);
+			if (Destination == nullptr)
 			{
-				const AActor* HitActor = Hit.GetActor();
-				USceneComponent* Destination = HitActor->FindComponentByTag<USceneComponent>(TagRopeDestinationName);
-				if (Destination == nullptr)
-				{
-					return false;
-				}
-
-				// TODO Don't start if we're too near destination
-				// TODO Check if reachable
-				// TODO Pass duration to transition
-				// TODO Play montage
-				TravelDestinationLocation = Destination->GetComponentLocation();
-				TravelTolerance = RopeReleaseTolerance;
-
-				FRotator NewRotation = (TravelDestinationLocation - UpdatedComponent->GetComponentLocation()).Rotation();
-				NewRotation.Pitch = 0.f;
-				NewRotation.Roll = 0.f;
-
-				FHitResult RotateResult;
-				SafeMoveUpdatedComponent(FVector::ZeroVector, NewRotation.Quaternion(), false, RotateResult);
-				
-				SetMovementMode(MOVE_Flying);
-				const FVector TransitionDestination = Hit.Location + FVector::DownVector * GetCapsuleHalfHeight();
-				PrepareTransition(ROPE_TRANSITION_NAME, TransitionDestination);
-				return true;
+				return false;
 			}
+
+			const FVector TransitionDestination = Hit.Location + FVector::DownVector * GetCapsuleHalfHeight();
+
+			const FVector DestinationLocation = Destination->GetComponentLocation();
+			const float IgnoreRopeDistSqr = FMath::Square(IgnoreRopeDistance);
+			if (FVector::DistSquared(StartTrace, DestinationLocation) <= IgnoreRopeDistSqr)
+			{
+				return false;
+			}
+
+			FCollisionQueryParams QueryParams = ExhibitionCharacterRef->GetIgnoreCollisionParams();
+			QueryParams.TraceTag = FName(TEXT("RopeUnReachable"));
+			FHitResult UnReachable;
+			const bool bUnReachable = GetWorld()->
+				SweepSingleByProfile(
+					UnReachable,
+					TransitionDestination,
+					DestinationLocation,
+					UpdatedComponent->GetComponentQuat(),
+					FName(TEXT("BlockAll")),
+					CollisionCapsule,
+					QueryParams
+			);
+
+			if (bUnReachable)
+			{
+				CAPSULE(UnReachable.Location, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Red);
+				return false;
+			}
+			
+			// TODO Play montage
+			TravelDestinationLocation = Destination->GetComponentLocation();
+			TravelTolerance = RopeReleaseTolerance;
+
+			const float TravelDistance = FVector::Dist(TravelDestinationLocation, UpdatedComponent->GetComponentLocation());
+			const float JumpToRopeDuration = FMath::Clamp(TravelDistance / 500.f, 0.1, JumpToRopeMaxDuration);
+			
+			SetMovementMode(MOVE_Flying);
+			PrepareTransition(ROPE_TRANSITION_NAME, TransitionDestination, JumpToRopeDuration);
+			return true;
 		}
 	}
 
@@ -1005,14 +1021,14 @@ uint16 UExhibitionMovementComponent::PrepareTravel(const FString& TravelName, co
 	return ApplyRootMotionSource(MoveToTransition);
 }
 
-uint16 UExhibitionMovementComponent::PrepareTransition(const FString& TransitionName, const FVector& Destination)
+uint16 UExhibitionMovementComponent::PrepareTransition(const FString& TransitionName, const FVector& Destination, const float Duration)
 {
 	const TSharedPtr<FRootMotionSource_MoveToForce> NewTransition = MakeShared<FRootMotionSource_MoveToForce>();
 	NewTransition->StartLocation = UpdatedComponent->GetComponentLocation();
 	NewTransition->TargetLocation = Destination;
 	NewTransition->InstanceName = FName(TransitionName);
 	NewTransition->AccumulateMode = ERootMotionAccumulateMode::Override;
-	NewTransition->Duration = 0.5f;
+	NewTransition->Duration = Duration;
 
 	Velocity = FVector::ZeroVector;
 	CurrentTransitionId = ApplyRootMotionSource(NewTransition);
@@ -1066,10 +1082,15 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 	Iterations++;
 	bJustTeleported = false;
 
-	FVector OldLocation = UpdatedComponent->GetComponentLocation();
+	const FVector OldLocation = UpdatedComponent->GetComponentLocation();
 	const FVector Adjusted = Velocity * deltaTime;
 	FHitResult Hit(1.f);
-	SafeMoveUpdatedComponent(Adjusted, UpdatedComponent->GetComponentQuat(), true, Hit);
+
+	FRotator NewRotation = (TravelDestinationLocation - UpdatedComponent->GetComponentLocation()).Rotation();
+	NewRotation.Pitch = 0.f;
+	NewRotation.Roll = 0.f;
+
+	SafeMoveUpdatedComponent(Adjusted, NewRotation, true, Hit);
 
 	// Make velocity reflect actual move
 	if( !bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && deltaTime >= MIN_TICK_TIME)

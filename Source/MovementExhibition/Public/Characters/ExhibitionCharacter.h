@@ -37,6 +37,7 @@ public:
 	FORCEINLINE UExhibitionMovementComponent* GetExhibitionMovComponent() { return ExhibitionMovementComponent; };
 
 	FCollisionQueryParams GetIgnoreCollisionParams() const;
+	TArray<TObjectPtr<AActor>> GetIgnoredActors();
 
 // Flags
 public:
