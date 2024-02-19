@@ -303,6 +303,11 @@ void UExhibitionMovementComponent::OnMovementModeChanged(EMovementMode PreviousM
 
 	if (IsCustomMovementMode(CMOVE_Rope))
 	{
+		if (GetOwnerRole() == ROLE_SimulatedProxy)
+		{
+			TryRope();
+		}
+		
 		EnterRope();
 	}
 }
@@ -420,6 +425,7 @@ void UExhibitionMovementComponent::UpdateFromCompressedFlags(uint8 Flags)
 	Safe_bWantsToSprint = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_0) != 0;
 	Safe_bWantsToDive = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_1) != 0;
 	Safe_bWantsToHook = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_2) != 0;
+	
 }
 
 bool UExhibitionMovementComponent::IsCustomMovementMode(const ECustomMovementMode& InMovementMode) const
@@ -1026,14 +1032,6 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 {
 	if (deltaTime < MIN_TICK_TIME)
 	{
-		return;
-	}
-
-	if (TravelDestinationLocation == FVector::ZeroVector)
-	{
-		SetMovementMode(MOVE_Falling);
-		StartNewPhysics(deltaTime, Iterations);
-		Safe_bReachedDestination = false;
 		return;
 	}
 	
