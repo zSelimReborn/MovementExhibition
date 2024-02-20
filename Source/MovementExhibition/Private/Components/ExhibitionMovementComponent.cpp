@@ -845,6 +845,11 @@ void UExhibitionMovementComponent::OnCompleteHook()
 
 bool UExhibitionMovementComponent::TryRope()
 {
+	if (!CharacterOwner->CanJump())
+	{
+		return false;
+	}
+	
 	const FVector StartTrace = UpdatedComponent->GetComponentLocation() + FVector::UpVector * GetCapsuleHalfHeight();
 	const float JumpHeight = GetMaxJumpHeightWithJumpTime();
 	FCollisionShape CollisionCapsule = FCollisionShape::MakeCapsule(GetCapsuleRadius(), GetCapsuleHalfHeight());
@@ -867,73 +872,75 @@ bool UExhibitionMovementComponent::TryRope()
 	}
 
 	FPredictProjectilePathResult JumpSimulateResult;
-	const bool bBlocked = UGameplayStatics::PredictProjectilePath(
+	const bool bFoundSomething = UGameplayStatics::PredictProjectilePath(
 		GetWorld(),
 		JumpSimulatePath,
 		JumpSimulateResult
 	);
-	
-	if (bBlocked)
+
+	if (!bFoundSomething)
 	{
-		const FHitResult Hit = JumpSimulateResult.HitResult;
-		if (Hit.GetActor() && Hit.GetActor()->ActorHasTag(TagRopeName))
-		{
-			const AActor* HitActor = Hit.GetActor();
-			USceneComponent* Destination = HitActor->FindComponentByTag<USceneComponent>(TagRopeDestinationName);
-			if (Destination == nullptr)
-			{
-				return false;
-			}
-
-			const float DownFactor = FMath::Clamp(RopeGrabFactor, 0.f, 1.f);
-			const FVector TransitionDestination = Hit.Location + FVector::DownVector * (GetCapsuleHalfHeight() * DownFactor);
-
-			const FVector DestinationLocation = Destination->GetComponentLocation();
-			const float IgnoreRopeDistSqr = FMath::Square(IgnoreRopeDistance);
-			if (FVector::DistSquared(StartTrace, DestinationLocation) <= IgnoreRopeDistSqr)
-			{
-				return false;
-			}
-
-			FCollisionQueryParams QueryParams = ExhibitionCharacterRef->GetIgnoreCollisionParams();
-			QueryParams.TraceTag = FName(TEXT("RopeUnReachable"));
-			QueryParams.AddIgnoredActor(HitActor);
-			FHitResult UnReachable;
-			const bool bUnReachable = GetWorld()->
-				SweepSingleByProfile(
-					UnReachable,
-					TransitionDestination,
-					DestinationLocation,
-					UpdatedComponent->GetComponentQuat(),
-					FName(TEXT("BlockAll")),
-					CollisionCapsule,
-					QueryParams
-			);
-
-			if (bUnReachable)
-			{
-				if (CVarDebugMovement->GetBool())
-				{
-					CAPSULE(UnReachable.Location, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Red);
-				}
-				
-				return false;
-			}
-			
-			// TODO Play montage
-			TravelDestinationLocation = Destination->GetComponentLocation();
-			TravelTolerance = RopeReleaseTolerance;
-
-			const float TravelDistance = FVector::Dist(TravelDestinationLocation, UpdatedComponent->GetComponentLocation());
-			const float JumpToRopeDuration = FMath::Clamp(TravelDistance / 500.f, 0.1, JumpToRopeMaxDuration);
-			
-			SetMovementMode(MOVE_Flying);
-			PrepareTransition(ROPE_TRANSITION_NAME, TransitionDestination, JumpToRopeDuration);
-			return true;
-		}
+		return false;
+	}
+	
+	const FHitResult Hit = JumpSimulateResult.HitResult;
+	if (!Hit.GetActor() || !Hit.GetActor()->ActorHasTag(TagRopeName))
+	{
+		return false;
+	}
+	
+	const AActor* HitActor = Hit.GetActor();
+	USceneComponent* Destination = HitActor->FindComponentByTag<USceneComponent>(TagRopeDestinationName);
+	if (Destination == nullptr)
+	{
+		return false;
 	}
 
-	return false;
+	const float DownFactor = FMath::Clamp(RopeGrabFactor, 0.f, 1.f);
+	const FVector TransitionDestination = Hit.Location + FVector::DownVector * (GetCapsuleHalfHeight() * DownFactor);
+
+	const FVector DestinationLocation = Destination->GetComponentLocation();
+	const float IgnoreRopeDistSqr = FMath::Square(IgnoreRopeDistance);
+	if (FVector::DistSquared(StartTrace, DestinationLocation) <= IgnoreRopeDistSqr)
+	{
+		return false;
+	}
+
+	FCollisionQueryParams QueryParams = ExhibitionCharacterRef->GetIgnoreCollisionParams();
+	QueryParams.TraceTag = FName(TEXT("RopeUnReachable"));
+	QueryParams.AddIgnoredActor(HitActor);
+	FHitResult UnReachable;
+	const bool bUnReachable = GetWorld()->
+		SweepSingleByProfile(
+			UnReachable,
+			TransitionDestination,
+			DestinationLocation,
+			UpdatedComponent->GetComponentQuat(),
+			FName(TEXT("BlockAll")),
+			CollisionCapsule,
+			QueryParams
+	);
+
+	if (bUnReachable)
+	{
+		if (CVarDebugMovement->GetBool())
+		{
+			CAPSULE(UnReachable.Location, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Red);
+		}
+		
+		return false;
+	}
+	
+	TravelDestinationLocation = Destination->GetComponentLocation();
+	TravelTolerance = RopeReleaseTolerance;
+
+	const float TravelDistance = FVector::Dist(TravelDestinationLocation, UpdatedComponent->GetComponentLocation());
+	const float JumpToRopeDuration = FMath::Clamp(TravelDistance / 500.f, 0.1, JumpToRopeMaxDuration);
+
+	PlayMontage(HangToRopeMontage);
+	SetMovementMode(MOVE_Flying);
+	PrepareTransition(ROPE_TRANSITION_NAME, TransitionDestination, JumpToRopeDuration);
+	return true;
 }
 
 void UExhibitionMovementComponent::EnterRope()

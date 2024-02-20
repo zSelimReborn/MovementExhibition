@@ -355,6 +355,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
 	float IgnoreRopeDistance = 200.f;
+
+	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
+	TObjectPtr<UAnimMontage> HangToRopeMontage;
 	
 	UPROPERTY(Transient)
 	FVector TravelDestinationLocation = FVector::ZeroVector;
