@@ -361,6 +361,11 @@ void UExhibitionMovementComponent::UpdateCharacterStateBeforeMovement(float Delt
 		{
 			ExhibitionCharacterRef->StopJumping();
 		}
+		else if (IsOnRope())
+		{
+			ExhibitionCharacterRef->bCustomPressedJump = false;
+			SetMovementMode(MOVE_Falling);
+		}
 		else
 		{
 			ExhibitionCharacterRef->bCustomPressedJump = false;
@@ -405,7 +410,6 @@ void UExhibitionMovementComponent::UpdateCharacterStateAfterMovement(float Delta
 
 bool UExhibitionMovementComponent::DoJump(bool bReplayingMoves)
 {
-	// TODO handle rope jump
 	const bool bJumped = Super::DoJump(bReplayingMoves);
 	if (bJumped)
 	{
@@ -852,6 +856,8 @@ bool UExhibitionMovementComponent::TryRope()
 	JumpSimulatePath.LaunchVelocity = JumpVelocity;
 	JumpSimulatePath.ActorsToIgnore = ExhibitionCharacterRef->GetIgnoredActors();
 	JumpSimulatePath.bTraceWithCollision = true;
+	JumpSimulatePath.bTraceWithChannel = true;
+	JumpSimulatePath.TraceChannel = ECC_WorldStatic;
 	JumpSimulatePath.ProjectileRadius = GetCapsuleRadius();
 
 	if (CVarDebugMovement->GetBool())
@@ -879,7 +885,8 @@ bool UExhibitionMovementComponent::TryRope()
 				return false;
 			}
 
-			const FVector TransitionDestination = Hit.Location + FVector::DownVector * GetCapsuleHalfHeight();
+			const float DownFactor = FMath::Clamp(RopeGrabFactor, 0.f, 1.f);
+			const FVector TransitionDestination = Hit.Location + FVector::DownVector * (GetCapsuleHalfHeight() * DownFactor);
 
 			const FVector DestinationLocation = Destination->GetComponentLocation();
 			const float IgnoreRopeDistSqr = FMath::Square(IgnoreRopeDistance);
@@ -890,6 +897,7 @@ bool UExhibitionMovementComponent::TryRope()
 
 			FCollisionQueryParams QueryParams = ExhibitionCharacterRef->GetIgnoreCollisionParams();
 			QueryParams.TraceTag = FName(TEXT("RopeUnReachable"));
+			QueryParams.AddIgnoredActor(HitActor);
 			FHitResult UnReachable;
 			const bool bUnReachable = GetWorld()->
 				SweepSingleByProfile(
@@ -1098,6 +1106,7 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 	Iterations++;
 	bJustTeleported = false;
 
+	// TODO Adjust velocity to follow a path? Projection on a normal?
 	const FVector OldLocation = UpdatedComponent->GetComponentLocation();
 	const FVector Adjusted = Velocity * deltaTime;
 	FHitResult Hit(1.f);

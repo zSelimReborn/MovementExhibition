@@ -344,6 +344,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Exhibition|Rope", meta=(ClampMin=0.1f))
     float JumpToRopeMaxDuration = 0.2f;
 
+	UPROPERTY(EditAnywhere, Category="Exhibition|Rope", meta=(ClampMin=0.f, ClampMax=1.f))
+	float RopeGrabFactor = 0.8f;
+
 	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
 	float MaxRopeSpeed = 800.f;
 
