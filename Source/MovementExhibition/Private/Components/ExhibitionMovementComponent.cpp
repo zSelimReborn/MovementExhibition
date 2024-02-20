@@ -13,16 +13,17 @@
 #define SHAPES_DEBUG_DURATION 5.f
 #define LINE(Start, End, Color) DrawDebugLine(GetWorld(), Start, End, Color, false, SHAPES_DEBUG_DURATION)
 #define CAPSULE(Center, Hh, Radius, Color) DrawDebugCapsule(GetWorld(), Center, Hh, Radius, FRotator::ZeroRotator.Quaternion(), Color, false, SHAPES_DEBUG_DURATION)
+#define SCREEN_LOG(Text, Color) GEngine->AddOnScreenDebugMessage(INDEX_NONE, SHAPES_DEBUG_DURATION, Color, Text)
 
 const FString UExhibitionMovementComponent::HOOK_TRAVEL_NAME = TEXT("HookTravel");
 
 const FString UExhibitionMovementComponent::ROPE_TRAVEL_NAME = TEXT("RopeTravel");
 const FString UExhibitionMovementComponent::ROPE_TRANSITION_NAME = TEXT("RopeTransition");
 
-static TAutoConsoleVariable<bool> CVarDebugHook(
-	TEXT("MovExhibition.Debug.Hook"),
+static TAutoConsoleVariable<bool> CVarDebugMovement(
+	TEXT("MovExhibition.Debug.CMC"),
 	false,
-	TEXT("Debug info about hooking"),
+	TEXT("Debug info about custom character movement component"),
 	ECVF_Default
 );
 
@@ -384,7 +385,6 @@ void UExhibitionMovementComponent::UpdateCharacterStateAfterMovement(float Delta
 	Super::UpdateCharacterStateAfterMovement(DeltaSeconds);
 
 	const TSharedPtr<FRootMotionSource> HookMotionSource = GetRootMotionSource(FName(HOOK_TRAVEL_NAME));
-	
 	if (IsRootMotionEnded(HookMotionSource))
 	{
 		OnCompleteHook();
@@ -393,6 +393,11 @@ void UExhibitionMovementComponent::UpdateCharacterStateAfterMovement(float Delta
 	const TSharedPtr<FRootMotionSource> CurrentTransition = GetRootMotionSourceByID(CurrentTransitionId);
 	if (IsRootMotionEnded(CurrentTransition))
 	{
+		if (CVarDebugMovement->GetBool())
+		{
+			SCREEN_LOG(FString::Printf(TEXT("Transition ended: %s"), *CurrentTransition->InstanceName.ToString()), FColor::Green);
+		}
+		
 		HandleEndTransition(*CurrentTransition.Get());
 		RemoveRootMotionSourceByID(CurrentTransitionId);
 	}
@@ -426,7 +431,6 @@ void UExhibitionMovementComponent::UpdateFromCompressedFlags(uint8 Flags)
 	Safe_bWantsToSprint = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_0) != 0;
 	Safe_bWantsToDive = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_1) != 0;
 	Safe_bWantsToHook = (Flags & FSavedMove_Character::CompressedFlags::FLAG_Custom_2) != 0;
-	
 }
 
 bool UExhibitionMovementComponent::IsCustomMovementMode(const ECustomMovementMode& InMovementMode) const
@@ -747,7 +751,7 @@ bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook, float& DistSqr
 	const FVector HookLocation = Hook->GetActorLocation();
 	const FVector ControlLookToHook = (HookLocation - CharacterLocation).GetSafeNormal2D();
 
-	if (CVarDebugHook->GetBool())
+	if (CVarDebugMovement->GetBool())
 	{
 		LINE(CharacterLocation, CharacterLocation + ControlLook * 500.f, FColor::Red);
 		LINE(CharacterLocation, CharacterLocation + ControlLookToHook * 500.f, FColor::Green);
@@ -782,7 +786,7 @@ bool UExhibitionMovementComponent::CanUseHook(const AActor* Hook, float& DistSqr
 		IgnoreParams
 	);
 
-	if (bIsBlocked && CVarDebugHook->GetBool())
+	if (bIsBlocked && CVarDebugMovement->GetBool())
 	{
 		CAPSULE(Hit.Location, Capsule.GetCapsuleHalfHeight(), Capsule.GetCapsuleRadius(), FColor::Red);
 	}
@@ -849,9 +853,12 @@ bool UExhibitionMovementComponent::TryRope()
 	JumpSimulatePath.ActorsToIgnore = ExhibitionCharacterRef->GetIgnoredActors();
 	JumpSimulatePath.bTraceWithCollision = true;
 	JumpSimulatePath.ProjectileRadius = GetCapsuleRadius();
-	// TODO CVar
-	//JumpSimulatePath.DrawDebugType = EDrawDebugTrace::ForDuration;
-	//JumpSimulatePath.DrawDebugTime = 5.f;
+
+	if (CVarDebugMovement->GetBool())
+	{
+		JumpSimulatePath.DrawDebugType = EDrawDebugTrace::ForDuration;
+		JumpSimulatePath.DrawDebugTime = 5.f;
+	}
 
 	FPredictProjectilePathResult JumpSimulateResult;
 	const bool bBlocked = UGameplayStatics::PredictProjectilePath(
@@ -897,7 +904,11 @@ bool UExhibitionMovementComponent::TryRope()
 
 			if (bUnReachable)
 			{
-				CAPSULE(UnReachable.Location, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Red);
+				if (CVarDebugMovement->GetBool())
+				{
+					CAPSULE(UnReachable.Location, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Red);
+				}
+				
 				return false;
 			}
 			
@@ -1029,6 +1040,11 @@ uint16 UExhibitionMovementComponent::PrepareTransition(const FString& Transition
 	NewTransition->InstanceName = FName(TransitionName);
 	NewTransition->AccumulateMode = ERootMotionAccumulateMode::Override;
 	NewTransition->Duration = Duration;
+
+	if (CVarDebugMovement->GetBool())
+	{
+		CAPSULE(Destination, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Purple);
+	}
 
 	Velocity = FVector::ZeroVector;
 	CurrentTransitionId = ApplyRootMotionSource(NewTransition);
