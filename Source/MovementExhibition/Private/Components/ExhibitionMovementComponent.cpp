@@ -896,8 +896,22 @@ bool UExhibitionMovementComponent::TryRope()
 		return false;
 	}
 
+	UCableComponent* ActualRope = HitActor->FindComponentByClass<UCableComponent>();
+	if (ActualRope == nullptr)
+	{
+		return false;
+	}
+
+	FVector StartRope, EndRope;
+	GetRopePositions(ActualRope, StartRope, EndRope);
+	const FVector RopeNormal = (EndRope - StartRope).GetSafeNormal();
+	
+	const FVector HitOnRope = FMath::ClosestPointOnSegment(Hit.Location, StartRope, EndRope);
 	const float DownFactor = FMath::Clamp(RopeGrabFactor, 0.f, 1.f);
-	const FVector TransitionDestination = Hit.Location + FVector::DownVector * (GetCapsuleHalfHeight() * DownFactor);
+	const FVector TransitionDestination = HitOnRope + FVector::DownVector * (GetCapsuleHalfHeight() * DownFactor);
+
+	DrawDebugPoint(GetWorld(), HitOnRope, 25.f, FColor::Blue, true, -1.f);
+	CAPSULE(TransitionDestination, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Blue);
 
 	const FVector DestinationLocation = Destination->GetComponentLocation();
 	const float IgnoreRopeDistSqr = FMath::Square(IgnoreRopeDistance);
@@ -930,9 +944,14 @@ bool UExhibitionMovementComponent::TryRope()
 		
 		return false;
 	}
+
+	const FVector RealDestination = EndRope + (-RopeNormal * GetCapsuleRadius() * 4) + (FVector::DownVector * GetCapsuleHalfHeight());
+	CAPSULE(RealDestination, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Blue);
+
+	TravelDestinationLocation = RealDestination;
 	
-	TravelDestinationLocation = Destination->GetComponentLocation();
 	TravelTolerance = RopeReleaseTolerance;
+	TravelNormal = RopeNormal;
 
 	const float TravelDistance = FVector::Dist(TravelDestinationLocation, UpdatedComponent->GetComponentLocation());
 	const float JumpToRopeDuration = FMath::Clamp(TravelDistance / 500.f, 0.1, JumpToRopeMaxDuration);
@@ -954,8 +973,36 @@ void UExhibitionMovementComponent::EnterRope()
 void UExhibitionMovementComponent::FinishRope()
 {
 	bOrientRotationToMovement = true;
+
+	TravelDestinationLocation = FVector::ZeroVector;
+	TravelNormal = FVector::ZeroVector;
+	TravelTolerance = 0.f;
 	
 	RemoveRootMotionSource(FName(ROPE_TRAVEL_NAME));
+}
+
+void UExhibitionMovementComponent::GetRopePositions(const UCableComponent* Rope, FVector& StartPosition, FVector& EndPosition)
+{
+	if (Rope == nullptr)
+	{
+		return;
+	}
+
+	StartPosition = Rope->GetComponentLocation();
+	const USceneComponent* EndComponent = Cast<USceneComponent>(Rope->AttachEndTo.GetComponent(Rope->GetOwner()));
+	if(EndComponent == nullptr)
+	{
+		EndComponent = Rope;
+	}
+
+	if (Rope->AttachEndToSocketName != NAME_None)
+	{
+		EndPosition = EndComponent->GetSocketTransform(Rope->AttachEndToSocketName).TransformPosition(Rope->EndLocation);
+	}
+	else
+	{
+		EndPosition = EndComponent->GetComponentTransform().TransformPosition(Rope->EndLocation);
+	}
 }
 
 void UExhibitionMovementComponent::ToggleHookCable()
@@ -1113,7 +1160,11 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 	Iterations++;
 	bJustTeleported = false;
 
-	// TODO Adjust velocity to follow a path? Projection on a normal?
+	if (!TravelNormal.IsZero())
+	{
+		Velocity = Velocity.ProjectOnToNormal(TravelNormal);
+	}
+	
 	const FVector OldLocation = UpdatedComponent->GetComponentLocation();
 	const FVector Adjusted = Velocity * deltaTime;
 	FHitResult Hit(1.f);

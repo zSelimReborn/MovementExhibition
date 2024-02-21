@@ -8,6 +8,7 @@
 
 class AExhibitionCharacter;
 class UAnimMontage;
+class UCableComponent;
 
 UENUM(BlueprintType)
 enum ECustomMovementMode
@@ -155,6 +156,8 @@ protected:
 	void EnterRope();
 
 	void FinishRope();
+
+	static void GetRopePositions(const UCableComponent* Rope, FVector& StartPosition, FVector& EndPosition);
 	
 	// Travel to destination
 	void PhysTravel(float deltaTime, int32 Iterations);
@@ -364,6 +367,9 @@ protected:
 
 	UPROPERTY(Transient)
 	float TravelTolerance = 0.f;
+	
+	UPROPERTY(Transient)
+	FVector TravelNormal = FVector::ZeroVector;
 
 	// TODO Probably not the ideal solution
 	UPROPERTY(Transient)
