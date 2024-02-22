@@ -1020,6 +1020,8 @@ void UExhibitionMovementComponent::EnterRope()
 	{
 		ApplyTravel();
 	}
+
+	OnEnterRope.Broadcast();
 }
 
 void UExhibitionMovementComponent::FinishRope()
@@ -1028,6 +1030,8 @@ void UExhibitionMovementComponent::FinishRope()
 
 	TravelData->Reset();
 	RemoveRootMotionSource(FName(ROPE_TRAVEL_NAME));
+
+	OnExitRope.Broadcast();
 }
 
 void UExhibitionMovementComponent::GetRopePositions(const UCableComponent* Rope, FVector& StartPosition, FVector& EndPosition)

@@ -45,9 +45,14 @@ struct FTravelData
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEnterSlideDelegate);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExitSlideDelegate);
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDiveDelegate);
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEnterHookDelegate);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExitHookDelegate);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEnterRopeDelegate);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExitRopeDelegate);
 
 /**
  * 
@@ -427,6 +432,12 @@ protected:
 
 	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
 	FOnExitHookDelegate OnExitHook;
+
+	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
+	FOnEnterRopeDelegate OnEnterRope;
+
+	UPROPERTY(BlueprintAssignable, Category="Exhibition Events")
+	FOnExitRopeDelegate OnExitRope;
 
 // Constants
 public:

@@ -26,9 +26,13 @@ protected:
 	void ComputeCrouch(FTViewTarget& OutVT, float DeltaTime);
 	
 	void ComputeHook(FTViewTarget& OutVT, float DeltaTime);
-	void ToggleSpeedLines(FTViewTarget& OutVT, float DeltaTime, bool bActivate);
+	
+	void ComputeRope(FTViewTarget& OutVT, float DeltaTime);
 	
 	void HandleCameraShake(float DeltaTime);
+
+	static void ToggleCustomBlur(FTViewTarget& OutVT, const float BlurAmountOffset, const float BlurDistortionOffset, const bool bAdd);
+	static void TogglePostProcessMaterial(FTViewTarget& OutVT, UMaterialInstance* Material, const bool bAdd);
 
 public:
 	virtual void InitializeFor(APlayerController* PC) override;
@@ -67,6 +71,15 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category="Hooking")
 	TSoftObjectPtr<UMaterialInstance> HookSpeedLines;
+
+	UPROPERTY(EditDefaultsOnly, Category="Rope")
+	float RopeBlurAmountOffset = 0.3f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Rope")
+	float RopeBlurMaxDistortionOffset = 2.f;
+	
+	UPROPERTY(EditDefaultsOnly, Category="Rope")
+	TSoftObjectPtr<UMaterialInstance> RopeSpeedLines;
 
 	UPROPERTY(EditDefaultsOnly, Category="Camera Shake")
 	TSubclassOf<UCameraShakeBase> IdleCameraShake;
