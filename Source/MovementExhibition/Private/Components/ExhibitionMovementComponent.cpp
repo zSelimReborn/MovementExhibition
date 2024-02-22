@@ -13,6 +13,7 @@
 #define SHAPES_DEBUG_DURATION 5.f
 #define LINE(Start, End, Color) DrawDebugLine(GetWorld(), Start, End, Color, false, SHAPES_DEBUG_DURATION)
 #define CAPSULE(Center, Hh, Radius, Color) DrawDebugCapsule(GetWorld(), Center, Hh, Radius, FRotator::ZeroRotator.Quaternion(), Color, false, SHAPES_DEBUG_DURATION)
+#define POINT(Location, Size, Color) DrawDebugPoint(GetWorld(), Location, Size, Color, false, SHAPES_DEBUG_DURATION);
 #define SCREEN_LOG(Text, Color) GEngine->AddOnScreenDebugMessage(INDEX_NONE, SHAPES_DEBUG_DURATION, Color, Text)
 
 const FString UExhibitionMovementComponent::HOOK_TRAVEL_NAME = TEXT("HookTravel");
@@ -184,6 +185,10 @@ void UExhibitionMovementComponent::InitializeComponent()
 	
 	InitialCapsuleHalfHeight = CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 	ExhibitionCharacterRef = Cast<AExhibitionCharacter>(CharacterOwner);
+	if (!TravelData.IsSet())
+	{
+		TravelData.Emplace();
+	}
 }
 
 FNetworkPredictionData_Client* UExhibitionMovementComponent::GetPredictionData_Client() const
@@ -390,9 +395,15 @@ void UExhibitionMovementComponent::UpdateCharacterStateAfterMovement(float Delta
 	Super::UpdateCharacterStateAfterMovement(DeltaSeconds);
 
 	const TSharedPtr<FRootMotionSource> HookMotionSource = GetRootMotionSource(FName(HOOK_TRAVEL_NAME));
+	const TSharedPtr<FRootMotionSource> RopeMotionSource = GetRootMotionSource(FName(ROPE_TRAVEL_NAME));
 	if (IsRootMotionEnded(HookMotionSource))
 	{
-		OnCompleteHook();
+		OnCompleteTravel(true, HookBrakingFactor);
+	}
+
+	if (IsRootMotionEnded(RopeMotionSource))
+	{
+		OnCompleteTravel(false, RopeBrakingFactor);
 	}
 	
 	const TSharedPtr<FRootMotionSource> CurrentTransition = GetRootMotionSourceByID(CurrentTransitionId);
@@ -736,8 +747,8 @@ bool UExhibitionMovementComponent::TryHook()
 	}
 
 	CurrentHook = SelectedHook;
-	TravelDestinationLocation = (SelectedHook != nullptr)? SelectedHook->GetActorLocation() : FVector::ZeroVector;
-	TravelTolerance = ReleaseHookTolerance;
+	const FVector Destination = (SelectedHook != nullptr)? SelectedHook->GetActorLocation() : FVector::ZeroVector;
+	PrepareTravel(HOOK_TRAVEL_NAME, Destination, ReleaseHookTolerance, FVector::ZeroVector, MaxHookSpeed, HookCurve);
 	return SelectedHook != nullptr;
 }
 
@@ -802,7 +813,7 @@ void UExhibitionMovementComponent::EnterHook()
 {
 	bOrientRotationToMovement = false;
 
-	PrepareTravel(HOOK_TRAVEL_NAME, MaxHookDistance, MaxHookSpeed, HookCurve);
+	ApplyTravel();
 	
 	if (bHandleCable)
 	{
@@ -816,8 +827,7 @@ void UExhibitionMovementComponent::FinishHook()
 {
 	Safe_bWantsToHook = false;
 	bOrientRotationToMovement = true;
-	TravelDestinationLocation = FVector::ZeroVector;
-	TravelTolerance = 0.f;
+	TravelData->Reset();
 	CurrentHook = nullptr;
 	RemoveRootMotionSource(FName(HOOK_TRAVEL_NAME));
 	
@@ -829,19 +839,67 @@ void UExhibitionMovementComponent::FinishHook()
 	OnExitHook.Broadcast();
 }
 
-void UExhibitionMovementComponent::OnCompleteHook()
+void UExhibitionMovementComponent::ToggleHookCable()
 {
-	if (Safe_bReachedDestination)
-	{
-		Velocity = FVector::ZeroVector;
-	}
-	else
-	{
-		Velocity -= Velocity / (1.f + (1.f - HookBrakingFactor));
-	}
+	ensure(CharacterOwner != nullptr);
 
-	Safe_bReachedDestination = false;
+	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
+	if (HookCable)
+	{
+		HookCable->bAttachEnd = true;
+		HookCable->bAttachStart = true;
+		HookCable->SetHiddenInGame(!HookCable->bHiddenInGame);
+		CurrentCableTime = 0.f;
+	}
 }
+
+void UExhibitionMovementComponent::UpdateHookCable(const float DeltaTime)
+{
+	ensure(CharacterOwner != nullptr);
+
+	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
+	const FVector TravelDestinationLocation = TravelData->Destination;
+	
+	if (HookCable && TravelDestinationLocation != FVector::ZeroVector)
+	{
+		const FVector HandLocation = (!HookSocketName.IsNone())? CharacterOwner->GetMesh()->GetSocketLocation(HookSocketName) : UpdatedComponent->GetComponentLocation();
+		const FVector TargetToHand = (TravelDestinationLocation - HandLocation).GetSafeNormal();
+		
+		const float MaxLength = FVector::Dist(HookCable->GetComponentLocation(), TravelDestinationLocation);
+		float CurrentLength = MaxLength;
+		
+		CurrentCableTime = FMath::Clamp(CurrentCableTime + DeltaTime, 0.f, CableTimeToReachDestination);
+		FVector EndLocation = TravelDestinationLocation;
+		if (CurrentCableTime < CableTimeToReachDestination)
+		{
+			const float TimeRatio = FMath::Clamp(CableCurve.GetRichCurveConst()->Eval(CurrentCableTime / CableTimeToReachDestination), 0.f, 1.f);
+			CurrentLength = FMath::Lerp(0.f, MaxLength, TimeRatio);
+			EndLocation = HandLocation + (TargetToHand * CurrentLength);
+		}
+
+		HookCable->SetUsingAbsoluteLocation(true);
+		HookCable->SetWorldLocation(EndLocation);
+		HookCable->CableLength = CurrentLength;
+	}
+}
+
+void UExhibitionMovementComponent::ResetHookCable()
+{
+	ensure(CharacterOwner != nullptr);
+
+	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
+	if (HookCable)
+	{
+		ToggleHookCable();
+		HookCable->SetWorldLocation(UpdatedComponent->GetComponentLocation());
+		HookCable->SetUsingAbsoluteLocation(false);
+		HookCable->CableLength = 0.f;
+	}
+}
+
+#pragma endregion
+
+#pragma region Rope
 
 bool UExhibitionMovementComponent::TryRope()
 {
@@ -890,12 +948,6 @@ bool UExhibitionMovementComponent::TryRope()
 	}
 	
 	const AActor* HitActor = Hit.GetActor();
-	USceneComponent* Destination = HitActor->FindComponentByTag<USceneComponent>(TagRopeDestinationName);
-	if (Destination == nullptr)
-	{
-		return false;
-	}
-
 	UCableComponent* ActualRope = HitActor->FindComponentByClass<UCableComponent>();
 	if (ActualRope == nullptr)
 	{
@@ -910,12 +962,17 @@ bool UExhibitionMovementComponent::TryRope()
 	const float DownFactor = FMath::Clamp(RopeGrabFactor, 0.f, 1.f);
 	const FVector TransitionDestination = HitOnRope + FVector::DownVector * (GetCapsuleHalfHeight() * DownFactor);
 
-	DrawDebugPoint(GetWorld(), HitOnRope, 25.f, FColor::Blue, true, -1.f);
-	CAPSULE(TransitionDestination, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Blue);
+	const FVector RealDestination = EndRope + (-RopeNormal * GetCapsuleRadius() * 4) + (FVector::DownVector * GetCapsuleHalfHeight());
 
-	const FVector DestinationLocation = Destination->GetComponentLocation();
+	if (CVarDebugMovement->GetBool())
+	{
+		POINT(HitOnRope, 25.f, FColor::Blue);
+		CAPSULE(TransitionDestination, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Blue);
+		CAPSULE(RealDestination, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Blue);
+	}
+
 	const float IgnoreRopeDistSqr = FMath::Square(IgnoreRopeDistance);
-	if (FVector::DistSquared(StartTrace, DestinationLocation) <= IgnoreRopeDistSqr)
+	if (FVector::DistSquared(StartTrace, RealDestination) <= IgnoreRopeDistSqr)
 	{
 		return false;
 	}
@@ -928,7 +985,7 @@ bool UExhibitionMovementComponent::TryRope()
 		SweepSingleByProfile(
 			UnReachable,
 			TransitionDestination,
-			DestinationLocation,
+			RealDestination,
 			UpdatedComponent->GetComponentQuat(),
 			FName(TEXT("BlockAll")),
 			CollisionCapsule,
@@ -945,39 +1002,29 @@ bool UExhibitionMovementComponent::TryRope()
 		return false;
 	}
 
-	const FVector RealDestination = EndRope + (-RopeNormal * GetCapsuleRadius() * 4) + (FVector::DownVector * GetCapsuleHalfHeight());
-	CAPSULE(RealDestination, GetCapsuleHalfHeight(), GetCapsuleRadius(), FColor::Blue);
+	PrepareTravel(ROPE_TRAVEL_NAME, RealDestination, RopeReleaseTolerance, RopeNormal, MaxRopeSpeed, RopeSpeedCurve);
 
-	TravelDestinationLocation = RealDestination;
-	
-	TravelTolerance = RopeReleaseTolerance;
-	TravelNormal = RopeNormal;
-
-	const float TravelDistance = FVector::Dist(TravelDestinationLocation, UpdatedComponent->GetComponentLocation());
+	const float TravelDistance = FVector::Dist(RealDestination, UpdatedComponent->GetComponentLocation());
 	const float JumpToRopeDuration = FMath::Clamp(TravelDistance / 500.f, 0.1, JumpToRopeMaxDuration);
 
 	PlayMontage(HangToRopeMontage);
 	SetMovementMode(MOVE_Flying);
-	PrepareTransition(ROPE_TRANSITION_NAME, TransitionDestination, JumpToRopeDuration);
+	ApplyTransition(ROPE_TRANSITION_NAME, TransitionDestination, JumpToRopeDuration);
 	return true;
 }
 
 void UExhibitionMovementComponent::EnterRope()
 {
 	bOrientRotationToMovement = false;
-	
-	const float Distance = FVector::Dist(UpdatedComponent->GetComponentLocation(), TravelDestinationLocation) + 1.f;
-	PrepareTravel(ROPE_TRAVEL_NAME, Distance, MaxRopeSpeed, nullptr);
+
+	ApplyTravel();
 }
 
 void UExhibitionMovementComponent::FinishRope()
 {
 	bOrientRotationToMovement = true;
 
-	TravelDestinationLocation = FVector::ZeroVector;
-	TravelNormal = FVector::ZeroVector;
-	TravelTolerance = 0.f;
-	
+	TravelData->Reset();
 	RemoveRootMotionSource(FName(ROPE_TRAVEL_NAME));
 }
 
@@ -1005,63 +1052,7 @@ void UExhibitionMovementComponent::GetRopePositions(const UCableComponent* Rope,
 	}
 }
 
-void UExhibitionMovementComponent::ToggleHookCable()
-{
-	ensure(CharacterOwner != nullptr);
-
-	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
-	if (HookCable)
-	{
-		HookCable->bAttachEnd = true;
-		HookCable->bAttachStart = true;
-		HookCable->SetHiddenInGame(!HookCable->bHiddenInGame);
-		CurrentCableTime = 0.f;
-	}
-}
-
-void UExhibitionMovementComponent::UpdateHookCable(const float DeltaTime)
-{
-	ensure(CharacterOwner != nullptr);
-
-	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
-	if (HookCable && TravelDestinationLocation != FVector::ZeroVector)
-	{
-		const FVector HandLocation = (!HookSocketName.IsNone())? CharacterOwner->GetMesh()->GetSocketLocation(HookSocketName) : UpdatedComponent->GetComponentLocation();
-		const FVector TargetToHand = (TravelDestinationLocation - HandLocation).GetSafeNormal();
-		
-		const float MaxLength = FVector::Dist(HookCable->GetComponentLocation(), TravelDestinationLocation);
-		float CurrentLength = MaxLength;
-		
-		CurrentCableTime = FMath::Clamp(CurrentCableTime + DeltaTime, 0.f, CableTimeToReachDestination);
-		FVector EndLocation = TravelDestinationLocation;
-		if (CurrentCableTime < CableTimeToReachDestination)
-		{
-			const float TimeRatio = FMath::Clamp(CableCurve.GetRichCurveConst()->Eval(CurrentCableTime / CableTimeToReachDestination), 0.f, 1.f);
-			CurrentLength = FMath::Lerp(0.f, MaxLength, TimeRatio);
-			EndLocation = HandLocation + (TargetToHand * CurrentLength);
-		}
-
-		HookCable->SetUsingAbsoluteLocation(true);
-		HookCable->SetWorldLocation(EndLocation);
-		HookCable->CableLength = CurrentLength;
-	}
-}
-
-void UExhibitionMovementComponent::ResetHookCable()
-{
-	ensure(CharacterOwner != nullptr);
-
-	UCableComponent* HookCable = CharacterOwner->FindComponentByClass<UCableComponent>();
-	if (HookCable)
-	{
-		ToggleHookCable();
-		HookCable->SetWorldLocation(UpdatedComponent->GetComponentLocation());
-		HookCable->SetUsingAbsoluteLocation(false);
-		HookCable->CableLength = 0.f;
-	}
-}
-
-#pragma endregion
+#pragma endregion 
 
 bool UExhibitionMovementComponent::IsRootMotionEnded(const TSharedPtr<FRootMotionSource>& Source)
 {
@@ -1076,17 +1067,85 @@ bool UExhibitionMovementComponent::IsRootMotionEnded(const TSharedPtr<FRootMotio
 
 #pragma region Travel
 
-uint16 UExhibitionMovementComponent::PrepareTravel(const FString& TravelName, const float MaxDistance, const float MaxSpeed, UCurveFloat* Curve)
+FTravelData::FTravelData()
+	: TravelName(NAME_None), Destination(FVector::ZeroVector), bHasTolerance(false), Tolerance(0.f), bHasNormal(false), Normal(FVector::ZeroVector), Speed(0.f), SpeedCurve(nullptr)
 {
+	
+}
+
+void FTravelData::Fill(const FName& InTravelName, const FVector& InDestination, const float InTolerance, const FVector& InNormal, const float InSpeed, UCurveFloat* InSpeedCurve)
+{
+	TravelName = InTravelName;
+	
+	Destination = InDestination;
+
+	bHasTolerance = (InTolerance > 0.f);
+	Tolerance = InTolerance;
+	
+	bHasNormal = (!Normal.IsZero());
+	Normal = InNormal;
+
+	Speed = InSpeed;
+	SpeedCurve = InSpeedCurve;
+}
+
+void FTravelData::Reset()
+{
+	TravelName = NAME_None;
+	
+	Destination = FVector::ZeroVector;
+	
+	bHasTolerance = false;
+	Tolerance = 0.f;
+
+	bHasNormal = 0.f;
+	Normal = FVector::ZeroVector;
+
+	Speed = 0.f;
+	SpeedCurve = nullptr;
+}
+
+void UExhibitionMovementComponent::PrepareTravel(const FString& TravelName, const FVector Destination, const float Tolerance, const FVector TravelNormal, const float MaxSpeed, UCurveFloat* Curve)
+{
+	if (!TravelData.IsSet())
+	{
+		TravelData.Emplace();
+	}
+	else
+	{
+		TravelData->Reset();
+	}
+
+	TravelData->Fill(
+		FName(TravelName),
+		Destination,
+		Tolerance,
+		TravelNormal,
+		MaxSpeed,
+		Curve
+	);
+}
+
+uint16 UExhibitionMovementComponent::ApplyTravel()
+{
+	if (!TravelData.IsSet())
+	{
+		return (uint16)ERootMotionSourceID::Invalid;
+	}
+
+	const float Radius = FVector::Dist(UpdatedComponent->GetComponentLocation(), TravelData->Destination) + 1.f;
 	const TSharedPtr<FRootMotionSource_RadialForce> MoveToTransition = MakeShared<FRootMotionSource_RadialForce>();
 	MoveToTransition->AccumulateMode = ERootMotionAccumulateMode::Override;
 	MoveToTransition->Priority = 6;
-	MoveToTransition->InstanceName = FName(TravelName);
-	MoveToTransition->Radius = MaxDistance;
+	MoveToTransition->InstanceName = TravelData->TravelName;
+	MoveToTransition->Radius = Radius;
 	MoveToTransition->bIsPush = false;
-	MoveToTransition->StrengthOverTime = Curve;
-	MoveToTransition->Strength = MaxSpeed;
-	MoveToTransition->Location = TravelDestinationLocation;
+	if (TravelData->SpeedCurve.IsValid())
+	{
+		MoveToTransition->StrengthOverTime = TravelData->SpeedCurve.Get();
+	}
+	MoveToTransition->Strength = TravelData->Speed;
+	MoveToTransition->Location = TravelData->Destination;
 	MoveToTransition->bUseFixedWorldDirection = false;
 
 	Safe_bReachedDestination = false;
@@ -1094,7 +1153,21 @@ uint16 UExhibitionMovementComponent::PrepareTravel(const FString& TravelName, co
 	return ApplyRootMotionSource(MoveToTransition);
 }
 
-uint16 UExhibitionMovementComponent::PrepareTransition(const FString& TransitionName, const FVector& Destination, const float Duration)
+void UExhibitionMovementComponent::OnCompleteTravel(const bool bNullifyVelocity, const float Factor)
+{
+	if (Safe_bReachedDestination && bNullifyVelocity)
+	{
+		Velocity = FVector::ZeroVector;
+	}
+	else
+	{
+		Velocity -= Velocity / (1.f + (1.f - Factor));
+	}
+
+	Safe_bReachedDestination = false;
+}
+
+uint16 UExhibitionMovementComponent::ApplyTransition(const FString& TransitionName, const FVector& Destination, const float Duration)
 {
 	const TSharedPtr<FRootMotionSource_MoveToForce> NewTransition = MakeShared<FRootMotionSource_MoveToForce>();
 	NewTransition->StartLocation = UpdatedComponent->GetComponentLocation();
@@ -1136,12 +1209,15 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 		return;
 	}
 
-	if (UpdatedComponent->GetComponentLocation().Equals(TravelDestinationLocation, TravelTolerance))
+	if (TravelData->bHasTolerance)
 	{
-		SetMovementMode(MOVE_Falling);
-		StartNewPhysics(deltaTime, Iterations);
-		Safe_bReachedDestination = true;
-		return;
+		if (UpdatedComponent->GetComponentLocation().Equals(TravelData->Destination, TravelData->Tolerance))
+		{
+			SetMovementMode(MOVE_Falling);
+			StartNewPhysics(deltaTime, Iterations);
+			Safe_bReachedDestination = true;
+			return;
+		}
 	}
 
 	RestorePreAdditiveRootMotionVelocity();
@@ -1160,16 +1236,16 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 	Iterations++;
 	bJustTeleported = false;
 
-	if (!TravelNormal.IsZero())
+	if (TravelData->bHasNormal)
 	{
-		Velocity = Velocity.ProjectOnToNormal(TravelNormal);
+		Velocity = Velocity.ProjectOnToNormal(TravelData->Normal);
 	}
 	
 	const FVector OldLocation = UpdatedComponent->GetComponentLocation();
 	const FVector Adjusted = Velocity * deltaTime;
 	FHitResult Hit(1.f);
 
-	FRotator NewRotation = (TravelDestinationLocation - UpdatedComponent->GetComponentLocation()).Rotation();
+	FRotator NewRotation = (TravelData->Destination - UpdatedComponent->GetComponentLocation()).Rotation();
 	NewRotation.Pitch = 0.f;
 	NewRotation.Roll = 0.f;
 
@@ -1186,12 +1262,15 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 		return;
 	}
 
-	if (UpdatedComponent->GetComponentLocation().Equals(TravelDestinationLocation, TravelTolerance))
+	if (TravelData->bHasTolerance)
 	{
-		SetMovementMode(MOVE_Falling);
-		StartNewPhysics(deltaTime, Iterations);
-		Safe_bReachedDestination = true;
-		return;
+		if (UpdatedComponent->GetComponentLocation().Equals(TravelData->Destination, TravelData->Tolerance))
+		{
+			SetMovementMode(MOVE_Falling);
+			StartNewPhysics(deltaTime, Iterations);
+			Safe_bReachedDestination = true;
+			return;
+		}
 	}
 }
 

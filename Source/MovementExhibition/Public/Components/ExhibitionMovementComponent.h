@@ -20,6 +20,29 @@ enum ECustomMovementMode
 	CMOVE_MAX			UMETA(Hidden),
 };
 
+USTRUCT()
+struct FTravelData
+{
+	GENERATED_BODY()
+
+	FName TravelName;
+	
+	FVector Destination;
+	
+	bool bHasTolerance;
+	float Tolerance;
+
+	bool bHasNormal;
+	FVector Normal;
+
+	float Speed;
+	TWeakObjectPtr<UCurveFloat> SpeedCurve;
+
+	FTravelData();
+	void Fill(const FName& InTravelName, const FVector& InDestination, const float InTolerance, const FVector& InNormal, const float InSpeed, UCurveFloat* InSpeedCurve);
+	void Reset();
+};
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEnterSlideDelegate);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExitSlideDelegate);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDiveDelegate);
@@ -147,9 +170,7 @@ protected:
 	void EnterHook();
 
 	void FinishHook();
-
-	void OnCompleteHook();
-
+	
 	// Rope
 	bool TryRope();
 
@@ -162,10 +183,14 @@ protected:
 	// Travel to destination
 	void PhysTravel(float deltaTime, int32 Iterations);
 
-	uint16 PrepareTravel(const FString& TravelName, const float MaxDistance, const float MaxSpeed, UCurveFloat* Curve);
+	void PrepareTravel(const FString& TravelName, const FVector Destination, const float Tolerance, const FVector TravelNormal, const float MaxSpeed, UCurveFloat* Curve);
+
+	uint16 ApplyTravel();
+
+	void OnCompleteTravel(const bool bNullifyVelocity, const float Factor);
 
 	// Generic transitions
-	uint16 PrepareTransition(const FString& TransitionName, const FVector& Destination, const float Duration);
+	uint16 ApplyTransition(const FString& TransitionName, const FVector& Destination, const float Duration);
 
 	void HandleEndTransition(const FRootMotionSource&);
 	
@@ -337,10 +362,7 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
 	FName TagRopeName = NAME_None;
-
-	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
-	FName TagRopeDestinationName = NAME_None;
-
+	
 	UPROPERTY(EditAnywhere, Category="Exhibition|Rope", meta=(ClampMin=0.f, ClampMax=100.f))
 	float JumpAdditive = 35.f;
 	
@@ -359,18 +381,17 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
 	float IgnoreRopeDistance = 200.f;
 
+	UPROPERTY(EditAnywhere, Category="Exhibition|Rope", meta=(ClampMin=0.f, ClampMax=1.f))
+	float RopeBrakingFactor = 0.8f;
+
 	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
 	TObjectPtr<UAnimMontage> HangToRopeMontage;
-	
-	UPROPERTY(Transient)
-	FVector TravelDestinationLocation = FVector::ZeroVector;
 
-	UPROPERTY(Transient)
-	float TravelTolerance = 0.f;
-	
-	UPROPERTY(Transient)
-	FVector TravelNormal = FVector::ZeroVector;
+	UPROPERTY(EditAnywhere, Category="Exhibition|Rope")
+	TObjectPtr<UCurveFloat> RopeSpeedCurve;
 
+	TOptional<FTravelData> TravelData;
+	
 	// TODO Probably not the ideal solution
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> CurrentAnimMontage;
