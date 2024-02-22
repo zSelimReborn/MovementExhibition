@@ -309,11 +309,6 @@ void UExhibitionMovementComponent::OnMovementModeChanged(EMovementMode PreviousM
 
 	if (IsCustomMovementMode(CMOVE_Rope))
 	{
-		if (GetOwnerRole() == ROLE_SimulatedProxy)
-		{
-			TryRope();
-		}
-		
 		EnterRope();
 	}
 }
@@ -1008,6 +1003,10 @@ bool UExhibitionMovementComponent::TryRope()
 	const float JumpToRopeDuration = FMath::Clamp(TravelDistance / 500.f, 0.1, JumpToRopeMaxDuration);
 
 	PlayMontage(HangToRopeMontage);
+	if (IsServer())
+	{
+		Proxy_FindRope = !Proxy_FindRope;
+	}
 	SetMovementMode(MOVE_Flying);
 	ApplyTransition(ROPE_TRANSITION_NAME, TransitionDestination, JumpToRopeDuration);
 	return true;
@@ -1017,7 +1016,10 @@ void UExhibitionMovementComponent::EnterRope()
 {
 	bOrientRotationToMovement = false;
 
-	ApplyTravel();
+	if (GetOwnerRole() != ROLE_SimulatedProxy)
+	{
+		ApplyTravel();
+	}
 }
 
 void UExhibitionMovementComponent::FinishRope()
@@ -1209,6 +1211,13 @@ void UExhibitionMovementComponent::PhysTravel(float deltaTime, int32 Iterations)
 		return;
 	}
 
+	if (TravelData->Destination.IsZero())
+	{
+		Acceleration = FVector::ZeroVector;
+		Velocity = FVector::ZeroVector;
+		return;
+	}
+
 	if (TravelData->bHasTolerance)
 	{
 		if (UpdatedComponent->GetComponentLocation().Equals(TravelData->Destination, TravelData->Tolerance))
@@ -1332,6 +1341,11 @@ bool UExhibitionMovementComponent::IsOnRope() const
 	return IsCustomMovementMode(CMOVE_Rope);
 }
 
+bool UExhibitionMovementComponent::IsServer() const
+{
+	return CharacterOwner->HasAuthority();
+}
+
 void UExhibitionMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -1339,6 +1353,7 @@ void UExhibitionMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimePr
 	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_Dive, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_JumpExtra, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_FindHook, COND_SkipOwner);
+	DOREPLIFETIME_CONDITION(UExhibitionMovementComponent, Proxy_FindRope, COND_SkipOwner);
 }
 
 void UExhibitionMovementComponent::OnRep_Dive()
@@ -1368,4 +1383,9 @@ void UExhibitionMovementComponent::OnRep_JumpExtra()
 void UExhibitionMovementComponent::OnRep_FindHook()
 {
 	TryHook();
+}
+
+void UExhibitionMovementComponent::OnRep_FindRope()
+{
+	CharacterOwner->PlayAnimMontage(HangToRopeMontage);
 }

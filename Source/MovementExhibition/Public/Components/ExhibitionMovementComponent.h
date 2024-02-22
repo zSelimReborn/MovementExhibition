@@ -230,6 +230,9 @@ public:
 	bool IsOnRope() const;
 
 	UFUNCTION(BlueprintPure)
+	bool IsServer() const;
+
+	UFUNCTION(BlueprintPure)
 	FORCEINLINE float GetInitialCapsuleHalfHeight() const { return InitialCapsuleHalfHeight; };
 
 // Replication
@@ -244,6 +247,9 @@ public:
 
 	UFUNCTION()
 	void OnRep_FindHook();
+
+	UFUNCTION()
+	void OnRep_FindRope();
 
 // CMC Safe Properties
 protected:
@@ -273,6 +279,9 @@ protected:
 
 	UPROPERTY(Transient, ReplicatedUsing=OnRep_FindHook)
 	bool Proxy_FindHook = false;
+
+	UPROPERTY(Transient, ReplicatedUsing=OnRep_FindRope)
+	bool Proxy_FindRope = false;
 	
 // Standard Properties
 protected:
