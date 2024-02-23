@@ -28,11 +28,15 @@ protected:
 	void ComputeHook(FTViewTarget& OutVT, float DeltaTime);
 	
 	void ComputeRope(FTViewTarget& OutVT, float DeltaTime);
+
+	void ComputeFOV(FTViewTarget& OutVT, float DeltaTime);
 	
 	void HandleCameraShake(float DeltaTime);
 
 	static void ToggleCustomBlur(FTViewTarget& OutVT, const float BlurAmountOffset, const float BlurDistortionOffset, const bool bAdd);
 	static void TogglePostProcessMaterial(FTViewTarget& OutVT, UMaterialInstance* Material, const bool bAdd);
+
+	float CalculateFov(const float Delta, const float MaxDuration, const float Target, const FRuntimeFloatCurve& Curve);
 
 public:
 	virtual void InitializeFor(APlayerController* PC) override;
@@ -46,14 +50,11 @@ protected:
 	float CrouchLocationTime = 0.f;
 
 	UPROPERTY(EditDefaultsOnly, Category="Crouch")
-	float CrouchOffsetFOV = 70.f;
+	float CrouchOffsetFOV = 15.f;
 
 	UPROPERTY(EditDefaultsOnly, Category="Crouch")
 	float CrouchFOVDuration = .5f;
-
-	UPROPERTY(Transient)
-	float CrouchFOVTime = 0.f;
-
+	
 	UPROPERTY(EditDefaultsOnly, Category="Crouch")
 	FRuntimeFloatCurve CrouchLocationCurve;
 
@@ -80,6 +81,15 @@ protected:
 	
 	UPROPERTY(EditDefaultsOnly, Category="Rope")
 	TSoftObjectPtr<UMaterialInstance> RopeSpeedLines;
+	
+	UPROPERTY(EditDefaultsOnly, Category="Rope")
+	float RopeOffsetFOV = 15.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Rope")
+	float RopeFOVDuration = .5f;
+	
+	UPROPERTY(EditDefaultsOnly, Category="Rope")
+	FRuntimeFloatCurve RopeFOVCurve;
 
 	UPROPERTY(EditDefaultsOnly, Category="Camera Shake")
 	TSubclassOf<UCameraShakeBase> IdleCameraShake;
@@ -89,6 +99,9 @@ protected:
 	
 	UPROPERTY(EditDefaultsOnly, Category="Camera Shake")
 	TSubclassOf<UCameraShakeBase> SprintCameraShake;
+
+	UPROPERTY(Transient)
+	float CurrentFOVTime = 0.f;
 
 	UPROPERTY(Transient)
 	TObjectPtr<AExhibitionCharacter> CharacterRef;
