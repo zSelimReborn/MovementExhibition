@@ -1088,7 +1088,7 @@ void FTravelData::Fill(const FName& InTravelName, const FVector& InDestination, 
 	bHasTolerance = (InTolerance > 0.f);
 	Tolerance = InTolerance;
 	
-	bHasNormal = (!Normal.IsZero());
+	bHasNormal = (!InNormal.IsZero());
 	Normal = InNormal;
 
 	Speed = InSpeed;
