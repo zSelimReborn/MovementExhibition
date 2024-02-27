@@ -34,8 +34,20 @@ void AExhibitionCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float Delta
 
 	Setup();
 	ComputeCrouch(OutVT, DeltaTime);
-	ComputeHook(OutVT, DeltaTime);
 
+	if (MovementComponentRef != nullptr)
+	{
+		if (MovementComponentRef->IsHooking())
+		{
+			ComputeHook(OutVT, DeltaTime);
+		}
+		if (MovementComponentRef->IsOnRope())
+		{
+			ComputeRope(OutVT, DeltaTime);
+		}
+	}
+
+	ComputeFOV(OutVT, DeltaTime);
 	HandleCameraShake(DeltaTime);
 }
 
@@ -53,15 +65,9 @@ void AExhibitionCameraManager::ComputeCrouch(FTViewTarget& OutVT, float DeltaTim
 	}
 
 	CrouchLocationTime = FMath::Clamp(CrouchLocationTime + TimeOffset, 0.f, CrouchLocationDuration);
-	CrouchFOVTime = FMath::Clamp(CrouchFOVTime + TimeOffset, 0.f, CrouchFOVDuration);
-
 	const float LocationRatio = CrouchLocationCurve.GetRichCurveConst()->Eval(CrouchLocationTime / CrouchLocationDuration);
-	const float FOVRatio = CrouchFOVCurve.GetRichCurveConst()->Eval(CrouchFOVTime / CrouchFOVDuration);
-
 	const FVector TargetLocationOffset = {0.f, 0.f, MovementComponentRef->GetCrouchedHalfHeight() - MovementComponentRef->GetInitialCapsuleHalfHeight()};
-	
 	FVector LocationOffset = FMath::Lerp(FVector::ZeroVector, TargetLocationOffset, LocationRatio);
-	const float FOVOffset = FMath::Lerp(0.f, -CrouchOffsetFOV, FOVRatio);
 	
 	if (MovementComponentRef->IsCrouching())
 	{
@@ -69,7 +75,6 @@ void AExhibitionCameraManager::ComputeCrouch(FTViewTarget& OutVT, float DeltaTim
 	}
 	
 	OutVT.POV.Location += LocationOffset;
-	OutVT.POV.FOV += FOVOffset;
 }
 
 void AExhibitionCameraManager::ComputeHook(FTViewTarget& OutVT, float DeltaTime)
@@ -78,36 +83,66 @@ void AExhibitionCameraManager::ComputeHook(FTViewTarget& OutVT, float DeltaTime)
 	{
 		return;
 	}
-
-	if (!OutVT.POV.PostProcessSettings.WeightedBlendables.Array.IsValidIndex(0))
-	{
-		OutVT.POV.PostProcessSettings.WeightedBlendables.Array.EmplaceAt(0, FWeightedBlendable(0.f, HookSpeedLines.LoadSynchronous()));
-	}
 	
 	const float CurrentSpeedSqr = MovementComponentRef->Velocity.SizeSquared();
 	if (MovementComponentRef->IsHooking() && CurrentSpeedSqr >= FMath::Square(HookBlurSpeedThreshold))
 	{
-		OutVT.POV.PostProcessSettings.bOverride_MotionBlurAmount = true;
-		OutVT.POV.PostProcessSettings.bOverride_MotionBlurMax = true;
-		OutVT.POV.PostProcessSettings.MotionBlurAmount += HookBlurAmountOffset;
-		OutVT.POV.PostProcessSettings.MotionBlurMax += HookBlurMaxDistortionOffset;
-
-		OutVT.POV.PostProcessSettings.WeightedBlendables.Array[0].Weight = 1.f;
+		ToggleCustomBlur(OutVT, HookBlurAmountOffset, HookBlurMaxDistortionOffset, true);
+		TogglePostProcessMaterial(OutVT, HookSpeedLines.LoadSynchronous(), true);
 	}
 	else if (OutVT.POV.PostProcessSettings.bOverride_MotionBlurAmount)
 	{
-		OutVT.POV.PostProcessSettings.bOverride_MotionBlurAmount = false;
-		OutVT.POV.PostProcessSettings.bOverride_MotionBlurMax = false;
-		OutVT.POV.PostProcessSettings.MotionBlurAmount -= HookBlurAmountOffset;
-		OutVT.POV.PostProcessSettings.MotionBlurMax -= HookBlurMaxDistortionOffset;
-		OutVT.POV.PostProcessSettings.WeightedBlendables.Array[0].Weight = 0.f;
+		ToggleCustomBlur(OutVT, HookBlurAmountOffset, HookBlurMaxDistortionOffset, false);
+		TogglePostProcessMaterial(OutVT, HookSpeedLines.LoadSynchronous(), false);
 	}
-
 }
 
-void AExhibitionCameraManager::ToggleSpeedLines(FTViewTarget& OutVT, float DeltaTime, bool bActivate)
+void AExhibitionCameraManager::ComputeRope(FTViewTarget& OutVT, float DeltaTime)
 {
+	if (MovementComponentRef == nullptr)
+	{
+		return;
+	}
 	
+	if (MovementComponentRef->IsOnRope())
+	{
+		ToggleCustomBlur(OutVT, RopeBlurAmountOffset, RopeBlurMaxDistortionOffset, true);
+		TogglePostProcessMaterial(OutVT, RopeSpeedLines.LoadSynchronous(), true);
+	}
+	else if (OutVT.POV.PostProcessSettings.bOverride_MotionBlurAmount)
+	{
+		ToggleCustomBlur(OutVT, RopeBlurAmountOffset, RopeBlurMaxDistortionOffset, false);
+		TogglePostProcessMaterial(OutVT, RopeSpeedLines.LoadSynchronous(), false);
+	}
+}
+
+void AExhibitionCameraManager::ComputeFOV(FTViewTarget& OutVT, float DeltaTime)
+{
+	if (MovementComponentRef == nullptr)
+	{
+		return;
+	}
+
+	const float CrouchTimeOffset = (MovementComponentRef->IsCrouching())? DeltaTime : -DeltaTime;
+	const float RopeTimeOffset = (MovementComponentRef->IsOnRope())? DeltaTime : -DeltaTime;
+
+	// How I imagine ChatGPT under the hood
+	// (Here I'd probably change to a queue of "FOV Change Request")
+	float FOVOffset;
+	if (MovementComponentRef->IsCrouching())
+	{
+		FOVOffset = CalculateFov(CrouchTimeOffset, CrouchFOVDuration, -CrouchOffsetFOV, CrouchFOVCurve);
+	}
+	else if (MovementComponentRef->IsOnRope())
+	{
+		FOVOffset = CalculateFov(RopeTimeOffset, RopeFOVDuration, RopeOffsetFOV, RopeFOVCurve);
+	}
+	else
+	{
+		FOVOffset = CalculateFov(CrouchTimeOffset, CrouchFOVDuration, -CrouchOffsetFOV, CrouchFOVCurve);
+	}
+
+	OutVT.POV.FOV += FOVOffset;
 }
 
 void AExhibitionCameraManager::HandleCameraShake(float DeltaTime)
@@ -137,6 +172,51 @@ void AExhibitionCameraManager::HandleCameraShake(float DeltaTime)
 	{
 		StartCameraShake(IdleCameraShake);
 	}
+}
+
+void AExhibitionCameraManager::ToggleCustomBlur(FTViewTarget& OutVT, const float BlurAmountOffset, const float BlurDistortionOffset, const bool bAdd)
+{
+	float BlurAmount = BlurAmountOffset;
+	float BlurDistortion = BlurDistortionOffset;
+	
+	if (!bAdd)
+	{
+		BlurAmount = - BlurAmountOffset;
+		BlurDistortion = -BlurDistortionOffset;
+	}
+	
+	OutVT.POV.PostProcessSettings.bOverride_MotionBlurAmount = bAdd;
+	OutVT.POV.PostProcessSettings.bOverride_MotionBlurMax = bAdd;
+	OutVT.POV.PostProcessSettings.MotionBlurAmount += BlurAmount;
+	OutVT.POV.PostProcessSettings.MotionBlurMax += BlurDistortion;
+}
+
+void AExhibitionCameraManager::TogglePostProcessMaterial(FTViewTarget& OutVT, UMaterialInstance* Material, const bool bAdd)
+{
+	if (!OutVT.POV.PostProcessSettings.WeightedBlendables.Array.IsValidIndex(0))
+	{
+		OutVT.POV.PostProcessSettings.WeightedBlendables.Array.EmplaceAt(0, FWeightedBlendable(0.f, Material));
+	}
+	else
+	{
+		OutVT.POV.PostProcessSettings.WeightedBlendables.Array[0] = FWeightedBlendable(0.f, Material);
+	}
+
+	float MaterialWeight = 0.f;
+	if (bAdd)
+	{
+		MaterialWeight = 1.f;	
+	}
+
+	OutVT.POV.PostProcessSettings.WeightedBlendables.Array[0].Weight = MaterialWeight;
+}
+
+float AExhibitionCameraManager::CalculateFov(const float Delta, const float MaxDuration, const float Target, const FRuntimeFloatCurve& Curve)
+{
+	CurrentFOVTime = FMath::Clamp(CurrentFOVTime + Delta, 0.f, MaxDuration);
+	const float FOVRatio = Curve.GetRichCurveConst()->Eval(CurrentFOVTime / MaxDuration);
+	const float NewFOV = FMath::Lerp(0.f, Target, FOVRatio);
+	return NewFOV;
 }
 
 void AExhibitionCameraManager::InitializeFor(APlayerController* PC)

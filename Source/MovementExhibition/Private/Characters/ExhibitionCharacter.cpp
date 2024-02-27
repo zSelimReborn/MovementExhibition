@@ -60,8 +60,16 @@ void AExhibitionCharacter::Jump()
 	}
 	else
 	{
+		bCustomPressedJump = true;
 		Super::Jump();
+		bPressedJump = false;
 	}
+}
+
+void AExhibitionCharacter::StopJumping()
+{
+	bCustomPressedJump = false;
+	Super::StopJumping();
 }
 
 FCollisionQueryParams AExhibitionCharacter::GetIgnoreCollisionParams() const
@@ -75,4 +83,13 @@ FCollisionQueryParams AExhibitionCharacter::GetIgnoreCollisionParams() const
 	Params.AddIgnoredActors(Children);
 	
 	return Params;
+}
+
+TArray<TObjectPtr<AActor>> AExhibitionCharacter::GetIgnoredActors()
+{
+	TArray<TObjectPtr<AActor>> IgnoredActors;
+	GetAllChildActors(IgnoredActors);
+	IgnoredActors.Add(this);
+	
+	return IgnoredActors;
 }
